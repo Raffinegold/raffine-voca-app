@@ -86,6 +86,7 @@ export default function HackerGame({
   const [wrongProblems, setWrongProblems] = useState<CodingProblem[]>([]);
   const solvedRef = useRef(0);
   const wrongTries = useRef(0);
+  const loggedRef = useRef<Set<string>>(new Set());
   const limit = store.cashDailyLimit();
 
   const problem = problems[index];
@@ -126,6 +127,10 @@ export default function HackerGame({
     if (!problem || picked !== null || reward) return;
     setPicked(i);
     const correct = i === options.answer;
+    if (!loggedRef.current.has(problem.id)) {
+      loggedRef.current.add(problem.id);
+      store.recordCodingAnswer(student, problem, correct, 'game');
+    }
     if (correct) {
       sfx.lockOpen();
       setOpenLocks((l) => [...l, index]);
@@ -154,6 +159,7 @@ export default function HackerGame({
   const restart = () => {
     solvedRef.current = 0;
     wrongTries.current = 0;
+    loggedRef.current = new Set();
     setRound((r) => r + 1);
     setIndex(0);
     setTrace(0);
