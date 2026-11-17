@@ -3,7 +3,7 @@ import { useVocaStore } from '../app-context';
 import { Badge, Bar, Button, Card } from '../components/ui';
 import { cn } from '../lib/util';
 import type { Student } from '../types';
-import { isSoundMuted, setSoundMuted, sfx } from '../lib/sound';
+import { isSoundMuted, setSoundMuted, sfx, startBgm, stopBgm, type BgmMood } from '../lib/sound';
 import { useState } from 'react';
 
 /* --------------------------------- 보상 ---------------------------------- */
@@ -236,6 +236,15 @@ export function SparkBurst({ count = 16, color = '#fbbf24', size = 6 }: { count?
       })}
     </span>
   );
+}
+
+/** 게임 화면에 들어온 동안 배경음악을 켜고, 화면을 벗어나면 자동으로 끕니다 */
+export function GameBgm({ mood }: { mood: BgmMood }) {
+  useEffect(() => {
+    startBgm(mood);
+    return () => stopBgm();
+  }, [mood]);
+  return null;
 }
 
 export function MuteButton() {

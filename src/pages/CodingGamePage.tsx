@@ -7,7 +7,7 @@ import { Badge, Card, SectionTitle } from '../components/ui';
 import { CODING_GAME_LIST, CODING_GAME_META } from '../lib/coding';
 import { cn } from '../lib/util';
 import { CODING_LEVEL_META, type CodingGameKey, type Student } from '../types';
-import { DailyCashCard, GamePickCard, MuteButton } from '../games/common';
+import { DailyCashCard, GameBgm, GamePickCard, MuteButton } from '../games/common';
 import RobotGame from '../games/coding/RobotGame';
 import CodingRainGame from '../games/coding/CodingRainGame';
 import DebugBossGame from '../games/coding/DebugBossGame';
@@ -95,6 +95,8 @@ export default function CodingGamePage() {
 
       <main className="mx-auto max-w-3xl space-y-3 px-4 pb-28 pt-3">
         <DailyCashCard earned={earnedToday} limit={limit} testId="coding-daily-earned" compact={!!game} />
+
+        {game ? <GameBgm mood={game === 'hacker' ? 'cyber' : 'arcade'} /> : null}
 
         {game === 'robot' ? <RobotGame student={student} onMenu={close} onShop={() => navigate('/shop')} /> : null}
         {game === 'rain' ? <CodingRainGame student={student} onMenu={close} onShop={() => navigate('/shop')} /> : null}

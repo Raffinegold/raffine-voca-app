@@ -8,7 +8,7 @@ import { useSubject } from '../subject-context';
 import { Badge, Bar, Card, SectionTitle } from '../components/ui';
 import { cn } from '../lib/util';
 import type { EnglishGameKey } from '../types';
-import { DailyCashCard, GamePickCard, MuteButton } from '../games/common';
+import { DailyCashCard, GameBgm, GamePickCard, MuteButton } from '../games/common';
 import MatchGame from '../games/english/MatchGame';
 import RainGame from '../games/english/RainGame';
 import BossGame from '../games/english/BossGame';
@@ -80,6 +80,8 @@ function EnglishGamePage() {
 
       <main className="mx-auto max-w-3xl space-y-3 px-4 pb-28 pt-3">
         <DailyCashCard earned={earnedToday} limit={limit} compact={!!game} />
+
+        {game ? <GameBgm mood="arcade" /> : null}
 
         {game === 'match' ? <MatchGame student={student} onMenu={close} onShop={() => navigate('/shop')} /> : null}
         {game === 'rain' ? <RainGame student={student} onMenu={close} onShop={() => navigate('/shop')} /> : null}

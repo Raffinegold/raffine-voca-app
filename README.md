@@ -140,7 +140,15 @@ node qa/rain-speed-wave.mjs   # 산성비 2종 — 속도 버튼 3개·기본 �
 ```bash
 npm run build
 node qa/games10.mjs   # 10종 전부 진입·조작·클리어·캐시 적립 + 콘솔 오류 0 + 대표 스크린샷 4장
+node qa/bgm.mjs       # 배경음악 — 진입 시 시작·스피커 토글·이탈 시 정지·해커 cyber·리스닝 duck + 콘솔 오류 0 (스크린샷 없음)
 ```
+
+### 배경음악(BGM)
+
+- `src/lib/sound.ts` 의 `startBgm('arcade' | 'cyber')` · `stopBgm()` · `duckBgm(bool)` — 오디오 파일 없이 WebAudio triangle/sine 오실레이터로 도는 루프(마스터 gain 0.045).
+- arcade: 밝은 C·Am·F·G 아르페지오(짝맞추기·산성비·보스전·로봇·유니티 등) / cyber: 은은한 사이버 신스(해커 침투).
+- 게임 화면은 `GameBgm` 컴포넌트를 렌더해 진입 시 켜고 이탈 시 끕니다(첫 터치 전에는 브라우저 정책상 대기).
+- 스피커 버튼(🔇/🔊)은 효과음과 BGM을 함께 끄고 켜며, 🔊 발음 리스닝 중에는 BGM이 자동으로 낮아집니다(`data-bgm` 속성으로 상태 확인 가능).
 
 ## Supabase 연결 (실시간 DB로 전환)
 

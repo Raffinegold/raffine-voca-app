@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVocaStore } from '../../app-context';
-import { sfx } from '../../lib/sound';
+import { duckBgm, sfx } from '../../lib/sound';
 import { speak, speechSupported } from '../../lib/speech';
 import { cn } from '../../lib/util';
 import type { Student } from '../../types';
@@ -42,6 +42,7 @@ export default function ListenGame({
   const [revealed, setRevealed] = useState(false);
   const startRef = useRef(0);
   const correctRef = useRef(0);
+  const duckTimer = useRef(0);
   const limit = store.cashDailyLimit();
   const word: QuizWord | undefined = words[index];
   const options = useMemo(() => (word ? buildChoices(word, pool, (w) => w.meaning, 4) : []), [word, pool]);
@@ -61,7 +62,19 @@ export default function ListenGame({
     setSpeaking(true);
     const ms = 700 + text.length * 78;
     window.setTimeout(() => setSpeaking(false), ms);
+    // 발음을 듣는 동안에는 배경음악을 더 낮춰 발음을 가리지 않게 합니다.
+    duckBgm(true);
+    window.clearTimeout(duckTimer.current);
+    duckTimer.current = window.setTimeout(() => duckBgm(false), ms + 120);
   };
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(duckTimer.current);
+      duckBgm(false);
+    },
+    []
+  );
 
   useEffect(() => {
     setPicked(null);
