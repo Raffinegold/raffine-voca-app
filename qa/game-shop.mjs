@@ -146,6 +146,8 @@ try {
   log(`학생 로그인 OK · 홈 캐시 표시 ${homeCash}원`);
 
   await page.getByTestId('nav-game').click();
+  await page.getByTestId('eng-game-menu').waitFor();
+  await page.getByTestId('eng-pick-match').click();
   await page.getByTestId('game-board').waitFor();
   const cards = await readCards(page);
   const faces = new Set(cards.map((c) => c.face));

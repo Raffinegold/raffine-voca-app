@@ -65,11 +65,13 @@ try {
 
   await page.getByTestId('coding-pick-robot').click();
   await page.getByTestId('cod-robot-grid').waitFor();
+  const stageBefore = await page.getByTestId('cod-robot-stage').innerText();
   const sol = (await page.getByTestId('cod-robot-grid').getAttribute('data-solution')).split(',').filter(Boolean);
   for (const c of sol) await page.getByTestId(`cod-robot-cmd-${c}`).click();
   await page.getByTestId('cod-robot-run').click();
   await page.waitForTimeout(900 + sol.length * 380 + 400);
-  log(`라이브 로봇 1스테이지: ${await page.getByTestId('cod-robot-message').innerText()}`);
+  const stageAfter = await page.getByTestId('cod-robot-stage').innerText();
+  log(`라이브 로봇: ${stageBefore} → ${stageAfter} (다음 스테이지로 넘어가면 클리어)`);
   await page.screenshot({ path: `${OUT}/qa_live_cod_robot.png` });
 
   await page.getByTestId('nav-game').click();

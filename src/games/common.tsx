@@ -335,7 +335,7 @@ export function WrongWords({ words }: { words: { word: string; meaning: string; 
   }
   return (
     <div className="mt-3">
-      <p className="text-[11px] font-bold text-slate-700">다시 만나면 좋은 단어</p>
+      <p className="text-[11px] font-bold text-slate-700">이번 판에서 헷갈린 단어</p>
       <ul className="mt-1.5 space-y-1" data-testid="game-wrong-list">
         {words.slice(0, 6).map((w) => (
           <li key={w.word} className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 text-[12px]">
