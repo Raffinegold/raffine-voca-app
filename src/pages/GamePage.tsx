@@ -197,6 +197,8 @@ export default function GamePage() {
 
   const total = pairs * 2;
   const cleared = matched.length;
+  const speedTargetSec = pairs * 7;
+  const remainSec = Math.max(0, speedTargetSec - Math.floor(elapsed / 1000));
   const wrongWords = wrongIds.map((id) => wordOf(id)).filter((w): w is Word => !!w);
   const columns = 4;
 
@@ -338,7 +340,9 @@ export default function GamePage() {
           ))}
           <span className="flex-1" />
           <span className="text-xs font-semibold text-slate-500" data-testid="game-stats">
-            ⏱ {formatDuration(elapsed)} · 시도 {attempts}회 · {cleared}/{pairs}쌍
+            {phase === 'playing'
+              ? `⏱ 남은 ${remainSec}초 · 시도 ${attempts}회 · ${cleared}/${pairs}쌍`
+              : `⏱ ${formatDuration(elapsed)} · 시도 ${attempts}회 · ${cleared}/${pairs}쌍`}
           </span>
         </div>
 
@@ -412,6 +416,8 @@ export default function GamePage() {
         <p className="mt-3 text-center text-[11px] leading-relaxed text-slate-400">
           영단어 카드와 한글 뜻 카드를 짝지어 뒤집어요. {LEVEL_META[student.level].grades} · Level {student.level} 단어에서{' '}
           {pairs}쌍이 나옵니다.
+          <br />
+          {speedTargetSec}초 안에 끝내면 스피드 보너스 +3원, 한 번도 틀리지 않으면 퍼펙트 보너스 +5원이 붙어요.
         </p>
 
         <div className="mt-3 flex items-center justify-center gap-2">
