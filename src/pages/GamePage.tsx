@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession, useVocaStore } from '../app-context';
 import StudentNav from '../components/StudentNav';
+import StudentHeader from '../components/StudentHeader';
+import CodingGamePage from './CodingGamePage';
+import { useSubject } from '../subject-context';
 import { Badge, Bar, Button, Card, LevelPill } from '../components/ui';
 import { isSoundMuted, setSoundMuted, sfx } from '../lib/sound';
 import { cn, shuffle } from '../lib/util';
@@ -45,6 +48,11 @@ function defaultPairs(level: Level): number {
 }
 
 export default function GamePage() {
+  const { subject } = useSubject();
+  return subject === 'coding' ? <CodingGamePage /> : <EnglishGamePage />;
+}
+
+function EnglishGamePage() {
   const store = useVocaStore();
   const navigate = useNavigate();
   const { student } = useSession();
@@ -204,30 +212,29 @@ export default function GamePage() {
 
   return (
     <div className="min-h-screen pb-safe">
-      <header className="sticky top-0 z-20 border-b border-white/60 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-2 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-2xl bg-brand-600 text-base text-white shadow-soft">🃏</span>
-            <div>
-              <p className="text-[11px] font-semibold text-slate-400">단어 짝맞추기</p>
-              <p className="text-sm font-bold leading-tight text-slate-900">{student.name}의 게임</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700" data-testid="game-balance">
+      <StudentHeader
+        icon="🃏"
+        brand="단어 짝맞추기 · 영어"
+        title={`${student.name}의 게임`}
+        right={
+          <>
+            <span
+              className="whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700"
+              data-testid="game-balance"
+            >
               💰 {store.cashBalance(student.id).toLocaleString()}원
             </span>
             <button
               data-testid="game-mute"
               onClick={toggleMute}
               aria-label={muted ? '소리 켜기' : '소리 끄기'}
-              className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+              className="rounded-full border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-50"
             >
               {muted ? '🔇' : '🔊'}
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <main className="mx-auto max-w-3xl px-4 pb-28 pt-4">
         {/* 오늘 적립 현황 */}

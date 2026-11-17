@@ -1,4 +1,13 @@
-import type { CashWallet, RedemptionRequest, ShopItem, Student, Word, WordSet, Level } from '../types';
+import type {
+  CashWallet,
+  CodingWrongNote,
+  RedemptionRequest,
+  ShopItem,
+  Student,
+  Word,
+  WordSet,
+  Level,
+} from '../types';
 
 /**
  * 데모 시드 데이터
@@ -140,6 +149,8 @@ export const SEED_STUDENTS: Student[] = [
     active: true,
     created_at: '2026-11-02T09:00:00+09:00',
     last_seen_at: null,
+    coding_level: 'C2',
+    enabled_subjects: ['english', 'coding'],
   },
   {
     id: 'stu-junwoo',
@@ -154,6 +165,8 @@ export const SEED_STUDENTS: Student[] = [
     active: true,
     created_at: '2026-11-02T09:10:00+09:00',
     last_seen_at: null,
+    coding_level: 'C3',
+    enabled_subjects: ['english', 'coding'],
   },
   {
     id: 'stu-haeun',
@@ -168,6 +181,9 @@ export const SEED_STUDENTS: Student[] = [
     active: true,
     created_at: '2026-11-03T10:00:00+09:00',
     last_seen_at: null,
+    // 코딩만 수강 — 로그인하면 코딩 화면으로 바로 들어갑니다 (원장님 과목 권한 예시)
+    coding_level: 'C1',
+    enabled_subjects: ['coding'],
   },
   {
     id: 'stu-minjun',
@@ -182,6 +198,8 @@ export const SEED_STUDENTS: Student[] = [
     active: true,
     created_at: '2026-11-04T11:00:00+09:00',
     last_seen_at: null,
+    coding_level: 'C4',
+    enabled_subjects: ['english', 'coding'],
   },
   {
     id: 'stu-yujin',
@@ -196,6 +214,9 @@ export const SEED_STUDENTS: Student[] = [
     active: true,
     created_at: '2026-11-05T14:00:00+09:00',
     last_seen_at: null,
+    // 영어만 수강 — 코딩 전환 버튼이 보이지 않는 예시
+    coding_level: 'C1',
+    enabled_subjects: ['english'],
   },
 ];
 
@@ -303,5 +324,38 @@ export function seedWallets(students: Student[], today: string): CashWallet[] {
 export const SEED_DEMO_PINS: Record<string, string> = Object.fromEntries(
   SEED_STUDENTS.map((s) => [s.id, s.pin])
 );
+
+/**
+ * 데모용 코딩 오답 노트 — 관리자 「코딩」 탭과 학생 오답노트를 바로 시연할 수 있게 넣어 둡니다.
+ * (김서연은 C2 파이썬, 박준우는 C3 C언어 문제를 틀린 상태)
+ */
+export function seedCodingWrongNotes(today: string): CodingWrongNote[] {
+  return [
+    {
+      student_id: 'stu-seoyeon',
+      problem_id: 'c2-03',
+      level: 'C2',
+      miss_count: 2,
+      last_wrong_at: `${today}T17:20:00+09:00`,
+      cleared_at: null,
+    },
+    {
+      student_id: 'stu-seoyeon',
+      problem_id: 'c2-07',
+      level: 'C2',
+      miss_count: 1,
+      last_wrong_at: `${today}T17:24:00+09:00`,
+      cleared_at: null,
+    },
+    {
+      student_id: 'stu-junwoo',
+      problem_id: 'c3-02',
+      level: 'C3',
+      miss_count: 1,
+      last_wrong_at: `${today}T18:05:00+09:00`,
+      cleared_at: null,
+    },
+  ];
+}
 
 export const LEVEL1_WORD_COUNT = L1.length;

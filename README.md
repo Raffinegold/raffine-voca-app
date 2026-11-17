@@ -119,6 +119,42 @@ QA_BASE=http://127.0.0.1:4173/raffine-voca-app node qa/game-shop.mjs
 
 > 학부모 리포트(`/r/:token`)는 현재 앱이 `parent_token`으로 학생을 찾아 집계합니다. Supabase 모드에서 학부모 링크를 외부에 공개할 때는 `weekly_reports`만 service_role로 읽는 Edge Function(`parent-report`)으로 옮기는 것이 안전합니다(2차 작업). 그전까지 링크 공개 범위는 원장님 판단으로 제한하세요.
 
+## 💻 영어 + 코딩 통합 (2026-11-17 업그레이드)
+
+원장님(관리자, PIN 9999)이 학생별로 **수강 과목(영어만 / 코딩만 / 영어 + 코딩)** 과 **코딩 레벨(C1~C4)** 을 정하고,
+학생은 상단 스위치로 `📚 영어` ↔ `💻 코딩`을 오갑니다. 기존 영어 기능(5단계 단어장·오답노트·랭킹·학부모 리포트)은 그대로입니다.
+
+| 영역 | 내용 | 파일 |
+|---|---|---|
+| 과목 전환 | 두 과목을 모두 연 학생만 상단 `📚 영어 / 💻 코딩` 스위치 표시 · 한 과목만 열면 그 화면으로 고정 | `src/subject-context.tsx`, `src/components/SubjectSwitch.tsx`, `StudentHeader.tsx` |
+| 코딩 커리큘럼 시드 | C1 블록·기초(스크래치·순서도) / C2 파이썬 / C3 C언어 / C4 유니티 C# — **38문제** (출력 14 · 빈칸 8 · 버그 8 · 블록 8) | `src/data/codingSeed.ts` |
+| 코딩 `오늘` | 레벨별 일일 미션 5문제(오답 복습 최대 2 + 출력/빈칸), 틀린 문제는 해설과 함께 코딩 오답노트로 | `src/pages/CodingHome.tsx`, `src/lib/coding.ts` |
+| 코딩 `게임` | 🐛 버그 찾기(5문제·콤보) / 🧩 블록 순서 맞추기(4문제) / ⚡ 출력 스피드 퀴즈(6문제·12초) | `src/pages/CodingGamePage.tsx` |
+| 캐시 | 영어·코딩 **공용 지갑** — 하루 상한(기본 50원)을 나눠 씀. 상한을 채우면 연습 모드 | `store.grantCash` (기존 로직 그대로) |
+| 관리자 | `💻 코딩` 탭 — 수강 과목·코딩 레벨 변경, 푼 문제·정답률·오답·게임 판수·오늘 적립, 최근 게임 기록 | `src/pages/AdminPage.tsx` |
+| 실데이터 | 로컬 데모 완전 동작 + `supabase/schema.sql` **15) 코딩 확장** (students.coding_level·enabled_subjects, coding_logs·coding_wrong_notes·coding_sessions, `admin_set_subjects`·`student_coding_bundle` RPC) | `supabase/schema.sql`, `src/lib/store.ts` |
+
+### 코딩 QA
+
+```bash
+npm run build
+node qa/coding.mjs          # 과목 전환 · 코딩 미션 · 3게임 · 50원 상한 공용 연동 · 관리자 권한/레벨
+node qa/english-smoke.mjs   # 영어 회귀 (로그인 → 카드 → 4지선다 → 스펠링 → 결과 → 오답노트 → 랭킹 → 상점)
+```
+
+두 스크립트 모두 `dist/` 를 Playwright 요청 인터셉트로 서빙하므로 로컬 서버 없이 실행됩니다.
+스크린샷은 `attachments/2026-11-17/` 에 남습니다(`qa_coding_mission.png`, `qa_coding_game.png` 등).
+
+### 데모 학생별 수강 과목 예시
+
+| 학생 | PIN | 수강 과목 | 코딩 레벨 |
+|---|---|---|---|
+| 김서연 | 1111 | 영어 + 코딩 | C2 파이썬 |
+| 박준우 | 2222 | 영어 + 코딩 | C3 C언어 |
+| 이하은 | 3333 | 코딩만 | C1 블록·기초 |
+| 최민준 | 4444 | 영어 + 코딩 | C4 유니티 C# |
+| 정유진 | 5555 | 영어만 | C1 |
+
 ## GitHub Pages 배포 (현재 사용 중)
 
 - 공개 주소: **https://Raffinegold.github.io/raffine-voca-app/**

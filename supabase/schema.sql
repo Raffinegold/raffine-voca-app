@@ -815,6 +815,130 @@ grant execute on function public.cash_daily_limit() to anon, authenticated;
 --   ('CU 모바일금액권 3,000원', 3000, '🎟️', 3),
 --   ('배스킨라빈스 싱글레귤러', 3900, '🍦', 4);
 
+
+-- ============================================================================
+--  15) 코딩 확장 (2026-11-17) — 영어 + 코딩 통합 학습
+--      · students.coding_level        : C1 블록·기초 / C2 파이썬 / C3 C언어 / C4 유니티 C#
+--      · students.enabled_subjects    : 원장님이 열어 준 수강 과목 (english, coding)
+--      · coding_logs / coding_wrong_notes / coding_sessions
+--  여러 번 실행해도 되도록 add column if not exists / drop policy if exists 를 씁니다.
+-- ============================================================================
+
+alter table public.students
+  add column if not exists coding_level text not null default 'C1',
+  add column if not exists enabled_subjects text[] not null default '{english,coding}'::text[];
+
+alter table public.students drop constraint if exists students_coding_level_check;
+alter table public.students
+  add constraint students_coding_level_check check (coding_level in ('C1', 'C2', 'C3', 'C4'));
+
+alter table public.students drop constraint if exists students_subjects_check;
+alter table public.students
+  add constraint students_subjects_check
+  check (enabled_subjects <@ array['english', 'coding']::text[] and array_length(enabled_subjects, 1) >= 1);
+
+-- 코딩 문항 풀이 로그 (problem_id 는 앱 시드 src/data/codingSeed.ts 의 id)
+create table if not exists public.coding_logs (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  problem_id text not null,
+  level text not null,
+  kind text not null check (kind in ('output', 'blank', 'bug', 'order')),
+  is_correct boolean not null,
+  mode text not null default 'mission' check (mode in ('mission', 'game', 'review')),
+  answered_at timestamptz default now()
+);
+create index if not exists coding_logs_student_idx on public.coding_logs (student_id, answered_at desc);
+
+-- 코딩 오답 노트 (문제 단위 누적 · 다시 맞히면 cleared_at)
+create table if not exists public.coding_wrong_notes (
+  student_id uuid references public.students(id) on delete cascade,
+  problem_id text not null,
+  level text not null,
+  miss_count smallint not null default 1,
+  last_wrong_at timestamptz default now(),
+  cleared_at timestamptz,
+  primary key (student_id, problem_id)
+);
+
+-- 코딩 게임 판 기록 (버그 찾기 · 블록 순서 · 출력 스피드)
+create table if not exists public.coding_sessions (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  game text not null check (game in ('bug', 'order', 'speed')),
+  score smallint not null default 0,
+  total smallint not null default 0,
+  cash_earned int not null default 0,
+  wrong_problem_ids jsonb not null default '[]'::jsonb,
+  played_at timestamptz default now()
+);
+create index if not exists coding_sessions_student_idx on public.coding_sessions (student_id, played_at desc);
+
+alter table public.coding_logs enable row level security;
+alter table public.coding_wrong_notes enable row level security;
+alter table public.coding_sessions enable row level security;
+
+drop policy if exists admin_all_coding_logs on public.coding_logs;
+create policy admin_all_coding_logs on public.coding_logs for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_coding_notes on public.coding_wrong_notes;
+create policy admin_all_coding_notes on public.coding_wrong_notes for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_coding_sessions on public.coding_sessions;
+create policy admin_all_coding_sessions on public.coding_sessions for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- 원장님 — 학생 수강 과목(영어만 / 코딩만 / 영어+코딩) 한 줄 변경
+create or replace function public.admin_set_subjects(p_student_id uuid, p_subjects text[])
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then raise exception 'FORBIDDEN'; end if;
+  if p_subjects is null or array_length(p_subjects, 1) is null then raise exception 'SUBJECTS_REQUIRED'; end if;
+  if not (p_subjects <@ array['english', 'coding']::text[]) then raise exception 'INVALID_SUBJECT'; end if;
+  update public.students set enabled_subjects = p_subjects where id = p_student_id;
+end;
+$$;
+grant execute on function public.admin_set_subjects(uuid, text[]) to authenticated;
+
+-- 학생 — 자기 코딩 기록만 받아오는 RPC (student_bundle 과 같은 세션 토큰 사용)
+create or replace function public.student_coding_bundle(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_student public.students;
+begin
+  select s.* into v_student
+    from public.students s
+    join public.student_sessions ss on ss.student_id = s.id
+   where ss.token = p_token and ss.expires_at > now()
+   limit 1;
+  if v_student.id is null then raise exception 'SESSION_INVALID'; end if;
+
+  return jsonb_build_object(
+    'coding_level', v_student.coding_level,
+    'enabled_subjects', v_student.enabled_subjects,
+    'coding_logs', coalesce(
+      (select jsonb_agg(to_jsonb(l) order by l.answered_at desc)
+         from public.coding_logs l where l.student_id = v_student.id), '[]'::jsonb),
+    'coding_wrong_notes', coalesce(
+      (select jsonb_agg(to_jsonb(n))
+         from public.coding_wrong_notes n
+        where n.student_id = v_student.id and n.cleared_at is null), '[]'::jsonb),
+    'coding_sessions', coalesce(
+      (select jsonb_agg(to_jsonb(g) order by g.played_at desc)
+         from public.coding_sessions g where g.student_id = v_student.id), '[]'::jsonb)
+  );
+end;
+$$;
+revoke all on function public.student_coding_bundle(text) from public;
+grant execute on function public.student_coding_bundle(text) to anon, authenticated;
+
 -- ============================================================================
 --  원장님 계정 만들기 (Supabase Auth)
 --  1) Authentication → Users → Add user 로 이메일/비밀번호 계정 1개 생성

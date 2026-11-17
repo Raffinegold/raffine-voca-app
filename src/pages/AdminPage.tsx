@@ -5,19 +5,34 @@ import ParentReportCard from '../components/ParentReportCard';
 import { parseWordCsv } from '../lib/csv';
 import { buildClassMessage, buildParentMessage, copyText, reportUrl } from '../lib/report';
 import { computeOverview, computeWeekStats } from '../lib/stats';
-import { LEVEL_META, LEVEL_TO_TOSEL, TOSEL_TO_LEVEL, type Level, type RedemptionRequest, type ShopItem, type Student, type ToselLevel } from '../types';
+import { LEVEL_META, LEVEL_TO_TOSEL, TOSEL_TO_LEVEL, CODING_LEVELS, CODING_LEVEL_META, type CodingLevel, type Level, type RedemptionRequest, type ShopItem, type Student, type Subject, type ToselLevel } from '../types';
+import { CODING_GAME_META } from '../lib/coding';
 import { cn, formatKoTimestamp, pct, todayStr, weekStartStr } from '../lib/util';
 
-type Tab = 'dash' | 'students' | 'words' | 'levels' | 'shop' | 'report';
+type Tab = 'dash' | 'students' | 'words' | 'levels' | 'coding' | 'shop' | 'report';
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'dash', label: '대시보드', icon: '📊' },
   { key: 'students', label: '학생', icon: '🧑‍🎓' },
   { key: 'words', label: '단어장', icon: '📖' },
   { key: 'levels', label: '레벨 배정', icon: '🎚️' },
+  { key: 'coding', label: '코딩', icon: '💻' },
   { key: 'shop', label: '상점·교환', icon: '🎁' },
   { key: 'report', label: '금요일 리포트', icon: '💬' },
 ];
+
+/** 수강 과목 선택 3가지 (원장님 화면) */
+const SUBJECT_CHOICES: { key: 'english' | 'coding' | 'both'; label: string; value: Subject[] }[] = [
+  { key: 'english', label: '영어만', value: ['english'] },
+  { key: 'coding', label: '코딩만', value: ['coding'] },
+  { key: 'both', label: '영어 + 코딩', value: ['english', 'coding'] },
+];
+
+function subjectKeyOf(list: Subject[] | undefined): 'english' | 'coding' | 'both' {
+  const hasEn = !!list?.includes('english');
+  const hasCo = !!list?.includes('coding');
+  return hasEn && hasCo ? 'both' : hasCo ? 'coding' : 'english';
+}
 
 function download(filename: string, content: string, mime = 'text/csv;charset=utf-8') {
   const blob = new Blob([content], { type: mime });
@@ -98,6 +113,7 @@ export default function AdminPage() {
         {tab === 'students' ? <StudentsTab /> : null}
         {tab === 'words' ? <WordsTab /> : null}
         {tab === 'levels' ? <LevelsTab /> : null}
+        {tab === 'coding' ? <CodingAdminTab /> : null}
         {tab === 'shop' ? <ShopAdminTab /> : null}
         {tab === 'report' ? <ReportTab /> : null}
       </main>
@@ -349,12 +365,14 @@ function StudentsTab() {
 
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto thin-scroll">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[820px] text-left text-sm">
             <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="px-4 py-3 font-semibold">이름</th>
                 <th className="px-3 py-3 font-semibold">반 · 학년</th>
-                <th className="px-3 py-3 font-semibold">레벨</th>
+                <th className="px-3 py-3 font-semibold">영어 레벨</th>
+                <th className="px-3 py-3 font-semibold">수강 과목</th>
+                <th className="px-3 py-3 font-semibold">코딩 레벨</th>
                 <th className="px-3 py-3 font-semibold">닉네임</th>
                 <th className="px-3 py-3 font-semibold">마지막 접속</th>
                 <th className="px-3 py-3 text-right font-semibold">관리</th>
@@ -373,6 +391,43 @@ function StudentsTab() {
                   <td className="px-3 py-3">
                     <LevelPill level={st.level} />
                     <span className="ml-1.5 text-[10px] text-slate-400">{st.tosel_level}</span>
+                  </td>
+                  <td className="px-3 py-3">
+                    {/* 원장님이 학생별로 영어·코딩 탭을 열어 주는 선택 */}
+                    <select
+                      data-testid={`admin-student-subjects-${st.id}`}
+                      value={subjectKeyOf(st.enabled_subjects)}
+                      onChange={(e) => {
+                        const choice = SUBJECT_CHOICES.find((c) => c.key === e.target.value);
+                        if (!choice) return;
+                        store.setStudentSubjects(st.id, choice.value);
+                        toast(`${st.name} 학생 수강 과목 · ${choice.label}`);
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-brand-400"
+                    >
+                      {SUBJECT_CHOICES.map((c) => (
+                        <option key={c.key} value={c.key}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-3">
+                    <select
+                      data-testid={`admin-student-coding-level-${st.id}`}
+                      value={st.coding_level}
+                      onChange={(e) => {
+                        store.setStudentCodingLevel(st.id, e.target.value as CodingLevel);
+                        toast(`${st.name} 학생 코딩 레벨 · ${e.target.value}`);
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-brand-400"
+                    >
+                      {CODING_LEVELS.map((lv) => (
+                        <option key={lv} value={lv}>
+                          {lv} · {CODING_LEVEL_META[lv].desc.split(' · ')[0]}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-3 text-slate-600">{st.nickname}</td>
                   <td className="px-3 py-3 text-[12px] text-slate-500">{formatKoTimestamp(st.last_seen_at)}</td>
@@ -803,6 +858,161 @@ function LevelsTab() {
             </ul>
           </Card>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ 코딩 (레벨 · 과목 권한) ------------------------------ */
+
+function CodingAdminTab() {
+  const store = useVocaStore();
+  const toast = useToast();
+  const overview = store.codingOverview();
+  const recent = store.allCodingSessions().slice(0, 6);
+  const codingStudents = overview.filter((o) => o.student.enabled_subjects.includes('coding'));
+  const playingToday = codingStudents.filter((o) => o.gameRounds > 0).length;
+  const openWrong = overview.reduce((sum, o) => sum + o.wrongOpen, 0);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-extrabold text-slate-900">코딩 학습 현황</h1>
+        <p className="mt-0.5 text-sm text-slate-500">
+          학생별 코딩 레벨(C1~C4)과 수강 과목(영어·코딩 탭)을 여기서 바로 바꿀 수 있어요. 바꾼 즉시 학생 화면에 적용됩니다.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">코딩 수강생</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900" data-testid="admin-coding-students">
+            {codingStudents.length}명
+          </p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">오늘 게임 플레이</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900">{playingToday}명</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">코딩 오답 대기</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900">{openWrong}개</p>
+        </Card>
+      </div>
+
+      <Card className="overflow-hidden p-0">
+        <div className="overflow-x-auto thin-scroll">
+          <table className="w-full min-w-[860px] text-left text-sm">
+            <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="px-4 py-3 font-semibold">학생</th>
+                <th className="px-3 py-3 font-semibold">수강 과목</th>
+                <th className="px-3 py-3 font-semibold">코딩 레벨</th>
+                <th className="px-3 py-3 font-semibold">푼 문제</th>
+                <th className="px-3 py-3 font-semibold">정답률</th>
+                <th className="px-3 py-3 font-semibold">오답 대기</th>
+                <th className="px-3 py-3 font-semibold">게임</th>
+                <th className="px-3 py-3 text-right font-semibold">오늘 적립</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {overview.map((row) => (
+                <tr key={row.student.id} data-testid={`admin-coding-row-${row.student.id}`} className={cn(!row.student.active && 'opacity-50')}>
+                  <td className="px-4 py-3">
+                    <p className="font-bold text-slate-800">{row.student.name}</p>
+                    <p className="text-[11px] text-slate-400">
+                      {row.student.class_name} · 마지막 {formatKoTimestamp(row.lastPlayedAt)}
+                    </p>
+                  </td>
+                  <td className="px-3 py-3">
+                    <select
+                      data-testid={`admin-subjects-${row.student.id}`}
+                      value={subjectKeyOf(row.student.enabled_subjects)}
+                      onChange={(e) => {
+                        const choice = SUBJECT_CHOICES.find((c) => c.key === e.target.value);
+                        if (!choice) return;
+                        store.setStudentSubjects(row.student.id, choice.value);
+                        toast(`${row.student.name} 학생 수강 과목 · ${choice.label}`);
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-brand-400"
+                    >
+                      {SUBJECT_CHOICES.map((c) => (
+                        <option key={c.key} value={c.key}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-3">
+                    <select
+                      data-testid={`admin-coding-level-${row.student.id}`}
+                      value={row.student.coding_level}
+                      onChange={(e) => {
+                        store.setStudentCodingLevel(row.student.id, e.target.value as CodingLevel);
+                        toast(`${row.student.name} 학생 코딩 레벨 · ${e.target.value}`);
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-brand-400"
+                    >
+                      {CODING_LEVELS.map((lv) => (
+                        <option key={lv} value={lv}>
+                          {lv} · {CODING_LEVEL_META[lv].desc.split(' · ')[0]}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-3 text-slate-600 tabular-nums">{row.solved}개</td>
+                  <td className="px-3 py-3 text-slate-600 tabular-nums">{row.answered ? `${row.accuracy}%` : '—'}</td>
+                  <td className="px-3 py-3">
+                    <span className={cn('text-[11px] font-bold', row.wrongOpen ? 'text-rose-400' : 'text-slate-400')}>
+                      {row.wrongOpen}개
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-slate-600 tabular-nums">{row.gameRounds}판</td>
+                  <td className="px-3 py-3 text-right font-bold text-amber-700 tabular-nums">{row.cashToday}원</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <SectionTitle sub="최근 판 기록">코딩 게임 기록</SectionTitle>
+          <ul className="mt-3 space-y-1.5">
+            {recent.length === 0 ? <li className="text-sm text-slate-400">아직 플레이 기록이 없어요.</li> : null}
+            {recent.map((s) => (
+              <li key={s.id} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                <span>{CODING_GAME_META[s.game].icon}</span>
+                <span className="font-bold text-slate-700">{store.getStudent(s.student_id)?.name ?? '학생'}</span>
+                <span className="flex-1 text-slate-500">{CODING_GAME_META[s.game].label}</span>
+                <span className="text-slate-500 tabular-nums">
+                  {s.score}/{s.total}
+                </span>
+                <span className="font-bold text-amber-700">+{s.cash_earned}원</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card>
+          <SectionTitle sub="라피네코딩 수업 순서">4단계 커리큘럼</SectionTitle>
+          <ul className="mt-3 space-y-2 text-xs">
+            {CODING_LEVELS.map((lv) => (
+              <li key={lv} className="rounded-xl bg-slate-50 px-3 py-2">
+                <p className="flex items-center gap-2">
+                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', CODING_LEVEL_META[lv].badge)}>{lv}</span>
+                  <span className="font-bold text-slate-700">{CODING_LEVEL_META[lv].desc}</span>
+                  <span className="ml-auto text-[10px] text-slate-400">{CODING_LEVEL_META[lv].grades}</span>
+                </p>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+            수강 과목을 「영어만」·「코딩만」으로 바꾸면 학생 하단 탭에서 다른 과목이 사라지고, 「영어 + 코딩」이면 상단에 전환
+            스위치가 보입니다. 캐시 지갑은 두 과목이 함께 써서 하루 상한을 나눠 씁니다.
+          </p>
+        </Card>
       </div>
     </div>
   );

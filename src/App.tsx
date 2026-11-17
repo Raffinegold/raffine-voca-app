@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { SessionProvider, useSession, useVocaStore } from './app-context';
+import { SubjectProvider } from './subject-context';
 import { ToastProvider } from './components/ui';
 import LoginPage from './pages/LoginPage';
 import StudentHome from './pages/StudentHome';
@@ -15,10 +16,16 @@ function Splash() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gradient-to-b from-brand-600 to-brand-800 text-white">
       <div className="animate-floaty text-5xl">📚</div>
-      <p className="text-lg font-bold">라피네 영단어</p>
-      <p className="text-sm text-white/70">단어장을 불러오는 중…</p>
+      <p className="text-lg font-bold">라피네 클래스</p>
+      <p className="text-sm text-white/70">단어장과 코딩 문제를 불러오는 중…</p>
     </div>
   );
+}
+
+/** 과목(📚 영어 / 💻 코딩) 전환 상태를 화면 전체에 내려 줍니다 */
+function SubjectShell({ children }: { children: JSX.Element }) {
+  const { student } = useSession();
+  return <SubjectProvider student={student}>{children}</SubjectProvider>;
 }
 
 function StudentRoute({ children }: { children: JSX.Element }) {
@@ -61,7 +68,8 @@ export default function App() {
   return (
     <ToastProvider>
       <SessionProvider>
-        <BrowserRouter basename={ROUTER_BASENAME}>
+        <SubjectShell>
+          <BrowserRouter basename={ROUTER_BASENAME}>
           <Routes>
             <Route path="/" element={<HomeSwitch />} />
             <Route
@@ -100,7 +108,8 @@ export default function App() {
             <Route path="/report/:token" element={<ParentReportPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </BrowserRouter>
+          </BrowserRouter>
+        </SubjectShell>
       </SessionProvider>
     </ToastProvider>
   );

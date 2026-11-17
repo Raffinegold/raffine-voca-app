@@ -3,6 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSession, useTodayDone, useVocaStore } from '../app-context';
 import { Badge, Bar, Button, Card, LevelPill, ProgressRing, SectionTitle } from '../components/ui';
 import StudentNav from '../components/StudentNav';
+import StudentHeader from '../components/StudentHeader';
+import CodingHome from './CodingHome';
+import { useSubject } from '../subject-context';
 import { buildMission, buildReviewOnly } from '../lib/mission';
 import { computeStreak, computeWeekStats, weeklyRanking } from '../lib/stats';
 import { LEVEL_META } from '../types';
@@ -11,7 +14,16 @@ import { cn, formatKoShort, pct, todayStr } from '../lib/util';
 type Tab = 'today' | 'wrong' | 'rank';
 const TABS: Tab[] = ['today', 'wrong', 'rank'];
 
+/**
+ * 학생 홈 — 원장님이 열어 준 과목에 따라 영어 홈과 코딩 홈을 갈아 끼웁니다.
+ * 영어 기능은 그대로 EnglishHome 안에 있고, 코딩 모드일 때만 CodingHome 이 나옵니다.
+ */
 export default function StudentHome() {
+  const { subject } = useSubject();
+  return subject === 'coding' ? <CodingHome /> : <EnglishHome />;
+}
+
+function EnglishHome() {
   const store = useVocaStore();
   const navigate = useNavigate();
   const { student, logout } = useSession();
@@ -47,33 +59,28 @@ export default function StudentHome() {
 
   return (
     <div className="min-h-screen pb-safe">
-      <header className="sticky top-0 z-20 border-b border-white/60 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-2xl bg-brand-600 text-base text-white shadow-soft">📚</span>
-            <div>
-              <p className="text-[11px] font-semibold text-slate-400">라피네코딩 두정점</p>
-              <p className="text-sm font-bold leading-tight text-slate-900">라피네 영단어</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5">
+      <StudentHeader
+        icon="📚"
+        brand="라피네코딩 두정점"
+        title="라피네 클래스 · 영어 & 코딩"
+        right={
+          <>
             <button
               onClick={() => navigate('/shop')}
               data-testid="home-cash"
-              className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700 hover:bg-amber-200"
+              className="whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-200"
             >
               💰 {store.cashBalance(student.id).toLocaleString()}원
             </button>
-            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">🔥 {streak}일</span>
             <button
               onClick={logout}
-              className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+              className="whitespace-nowrap rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-50"
             >
               나가기
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <main className="mx-auto max-w-3xl px-4 pb-28 pt-4">
         <div className="mb-4 flex items-center gap-3">

@@ -3,6 +3,10 @@ import type {
   AppSettings,
   Assignment,
   CashWallet,
+  CodingLevel,
+  CodingLog,
+  CodingSession,
+  CodingWrongNote,
   DailyProgress,
   GameSession,
   Level,
@@ -12,6 +16,7 @@ import type {
   Student,
   StudyLog,
   StudyMode,
+  Subject,
   WeeklyReport,
   Word,
   WordSet,
@@ -25,6 +30,7 @@ import {
   SEED_STUDENTS,
   SEED_WORD_SETS,
   SEED_WORDS,
+  seedCodingWrongNotes,
   seedRedemptions,
   seedWallets,
 } from '../data/seed';
@@ -46,6 +52,9 @@ interface DB {
   shop_items: ShopItem[];
   redemptions: RedemptionRequest[];
   games: GameSession[];
+  coding_logs: CodingLog[];
+  coding_wrong_notes: CodingWrongNote[];
+  coding_sessions: CodingSession[];
   settings: AppSettings;
 }
 
@@ -63,6 +72,9 @@ const emptyDB = (): DB => ({
   shop_items: [],
   redemptions: [],
   games: [],
+  coding_logs: [],
+  coding_wrong_notes: [],
+  coding_sessions: [],
   settings: { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT },
 });
 
@@ -83,6 +95,8 @@ export interface NewStudentInput {
   class_name: string;
   nickname?: string;
   level?: Level;
+  coding_level?: CodingLevel;
+  enabled_subjects?: Subject[];
 }
 
 /**
@@ -107,6 +121,9 @@ class VocaStore {
   shopItems: ShopItem[] = [];
   redemptions: RedemptionRequest[] = [];
   games: GameSession[] = [];
+  codingLogs: CodingLog[] = [];
+  codingWrongNotes: CodingWrongNote[] = [];
+  codingSessions: CodingSession[] = [];
   settings: AppSettings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
   ready: Promise<void>;
   adminEmail: string | null = null;
@@ -158,6 +175,13 @@ class VocaStore {
     if (!this.settings || typeof this.settings.cash_daily_limit !== 'number') {
       this.settings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     }
+    // 코딩 확장 이전 저장본: 수강 과목이 없으면 영어+코딩 둘 다 열린 상태로, 코딩 레벨은 C1로 채웁니다
+    this.students = this.students.map((s) => ({
+      ...s,
+      coding_level: s.coding_level ?? 'C1',
+      enabled_subjects:
+        Array.isArray(s.enabled_subjects) && s.enabled_subjects.length ? s.enabled_subjects : ['english', 'coding'],
+    }));
     if (!this.shopItems.length) {
       this.shopItems = SEED_SHOP_ITEMS.map((i) => ({ ...i }));
     }
@@ -197,6 +221,9 @@ class VocaStore {
       this.shopItems = db.shop_items ?? [];
       this.redemptions = db.redemptions ?? [];
       this.games = db.games ?? [];
+      this.codingLogs = db.coding_logs ?? [];
+      this.codingWrongNotes = db.coding_wrong_notes ?? [];
+      this.codingSessions = db.coding_sessions ?? [];
       this.settings = db.settings ?? { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     } catch (err) {
       console.warn('[voca] 로컬 저장소 읽기 실패, 새로 시작합니다', err);
@@ -221,6 +248,9 @@ class VocaStore {
         shop_items: this.shopItems,
         redemptions: this.redemptions,
         games: this.games,
+        coding_logs: this.codingLogs,
+        coding_wrong_notes: this.codingWrongNotes,
+        coding_sessions: this.codingSessions,
         settings: this.settings,
       };
       try {
@@ -356,6 +386,9 @@ class VocaStore {
     this.shopItems = SEED_SHOP_ITEMS.map((i) => ({ ...i }));
     this.redemptions = seedRedemptions(today);
     this.games = [];
+    this.codingLogs = [];
+    this.codingWrongNotes = seedCodingWrongNotes(today);
+    this.codingSessions = [];
     this.settings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     this.persistLocal();
   }
@@ -465,6 +498,24 @@ class VocaStore {
     if (typeof bundle.daily_cash_limit === 'number') {
       this.settings = { cash_daily_limit: bundle.daily_cash_limit };
     }
+    // 코딩 확장 — student_coding_bundle RPC 가 있으면 코딩 기록까지 받아옵니다 (없는 스키마에서도 동작)
+    try {
+      const { data: coding, error: codingError } = await this.client.rpc('student_coding_bundle', {
+        p_token: this.studentToken,
+      });
+      if (!codingError && coding) {
+        const c = coding as any;
+        if (Array.isArray(c.coding_logs)) this.codingLogs = c.coding_logs as CodingLog[];
+        if (Array.isArray(c.coding_wrong_notes)) this.codingWrongNotes = c.coding_wrong_notes as CodingWrongNote[];
+        if (Array.isArray(c.coding_sessions)) this.codingSessions = c.coding_sessions as CodingSession[];
+      }
+    } catch {
+      /* 코딩 RPC 미적용 환경 */
+    }
+    // 코딩 확장 — 서버 번들에 코딩 데이터가 있으면 함께 받아옵니다 (없는 스키마에서도 동작)
+    if (Array.isArray(bundle.coding_logs)) this.codingLogs = bundle.coding_logs as CodingLog[];
+    if (Array.isArray(bundle.coding_wrong_notes)) this.codingWrongNotes = bundle.coding_wrong_notes as CodingWrongNote[];
+    if (Array.isArray(bundle.coding_sessions)) this.codingSessions = bundle.coding_sessions as CodingSession[];
     this.emit();
   }
 
@@ -485,6 +536,8 @@ class VocaStore {
       active: true,
       created_at: new Date().toISOString(),
       last_seen_at: null,
+      coding_level: input.coding_level ?? 'C1',
+      enabled_subjects: input.enabled_subjects ?? ['english', 'coding'],
     };
 
     if (this.mode === 'supabase' && this.client) {
@@ -587,6 +640,202 @@ class VocaStore {
       .filter((h) => !studentId || h.student_id === studentId)
       .slice()
       .sort((a, b) => b.changed_at.localeCompare(a.changed_at));
+  }
+
+  /* --------------------------- 코딩 레벨 · 수강 과목 --------------------------- */
+
+  /** 원장님 — 학생별 코딩 커리큘럼 레벨(C1~C4) 변경 */
+  setStudentCodingLevel(studentId: string, level: CodingLevel) {
+    const st = this.getStudent(studentId);
+    if (!st || st.coding_level === level) return;
+    st.coding_level = level;
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`students coding_level ${studentId}`, () =>
+        this.client!.from('students').update({ coding_level: level }).eq('id', studentId)
+      );
+    }
+    this.commit();
+  }
+
+  /** 원장님 — 학생별 수강 과목(탭) 열어 주기. 영어·코딩 순서와 중복은 정리합니다. */
+  setStudentSubjects(studentId: string, subjects: Subject[]) {
+    const st = this.getStudent(studentId);
+    if (!st) return;
+    const clean: Subject[] = (['english', 'coding'] as Subject[]).filter((s) => subjects.includes(s));
+    const next = clean.length ? clean : (['english'] as Subject[]);
+    if (st.enabled_subjects.length === next.length && st.enabled_subjects.every((s, i) => s === next[i])) return;
+    st.enabled_subjects = next;
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`students subjects ${studentId}`, () =>
+        this.client!.from('students').update({ enabled_subjects: next }).eq('id', studentId)
+      );
+    }
+    this.commit();
+  }
+
+  /* -------------------------------- 코딩 미션 -------------------------------- */
+
+  codingLogsFor(studentId: string): CodingLog[] {
+    return this.codingLogs.filter((l) => l.student_id === studentId);
+  }
+
+  /** 코딩 오답 노트 — 아직 졸업하지 않은 문제 (틀린 횟수 많은 순) */
+  codingWrongNotesFor(studentId: string): CodingWrongNote[] {
+    return this.codingWrongNotes
+      .filter((n) => n.student_id === studentId && !n.cleared_at)
+      .slice()
+      .sort((a, b) => b.miss_count - a.miss_count || b.last_wrong_at.localeCompare(a.last_wrong_at));
+  }
+
+  /** 코딩 문항 답 기록 — 틀리면 오답 노트에 쌓고, 다시 맞히면 졸업 처리 */
+  recordCodingAnswer(
+    student: Student,
+    problem: { id: string; level: CodingLevel; kind: CodingLog['kind'] },
+    isCorrect: boolean,
+    mode: CodingLog['mode'] = 'mission'
+  ) {
+    const at = new Date().toISOString();
+    const log: CodingLog = {
+      id: uid('clog'),
+      student_id: student.id,
+      problem_id: problem.id,
+      level: problem.level,
+      kind: problem.kind,
+      is_correct: isCorrect,
+      mode,
+      answered_at: at,
+    };
+    this.codingLogs = [...this.codingLogs.slice(-4000), log];
+
+    const idx = this.codingWrongNotes.findIndex(
+      (n) => n.student_id === student.id && n.problem_id === problem.id
+    );
+    if (isCorrect) {
+      if (idx >= 0) {
+        const note: CodingWrongNote = { ...this.codingWrongNotes[idx], cleared_at: at };
+        this.codingWrongNotes = this.codingWrongNotes.map((n, i) => (i === idx ? note : n));
+        this.cloudCodingWrongNote(note);
+      }
+    } else {
+      const note: CodingWrongNote =
+        idx >= 0
+          ? {
+              ...this.codingWrongNotes[idx],
+              miss_count: this.codingWrongNotes[idx].miss_count + 1,
+              last_wrong_at: at,
+              cleared_at: null,
+            }
+          : {
+              student_id: student.id,
+              problem_id: problem.id,
+              level: problem.level,
+              miss_count: 1,
+              last_wrong_at: at,
+              cleared_at: null,
+            };
+      this.codingWrongNotes = idx >= 0 ? this.codingWrongNotes.map((n, i) => (i === idx ? note : n)) : [...this.codingWrongNotes, note];
+      this.cloudCodingWrongNote(note);
+    }
+
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`coding answer ${student.id}`, () =>
+        this.client!.from('coding_logs').insert({
+          student_id: student.id,
+          problem_id: problem.id,
+          level: problem.level,
+          kind: problem.kind,
+          is_correct: isCorrect,
+          mode,
+        })
+      );
+    }
+    this.commit();
+  }
+
+  private cloudCodingWrongNote(note: CodingWrongNote) {
+    if (this.mode !== 'supabase' || !this.client) return;
+    this.cloud(`coding wrong note ${note.problem_id}`, () =>
+      this.client!
+        .from('coding_wrong_notes')
+        .upsert(
+          {
+            student_id: note.student_id,
+            problem_id: note.problem_id,
+            level: note.level,
+            miss_count: note.miss_count,
+            last_wrong_at: note.last_wrong_at,
+            cleared_at: note.cleared_at,
+          },
+          { onConflict: 'student_id,problem_id' }
+        )
+    );
+  }
+
+  recordCodingSession(
+    studentId: string,
+    input: { game: CodingSession['game']; score: number; total: number; cashEarned: number; wrongProblemIds: string[] }
+  ): CodingSession {
+    const session: CodingSession = {
+      id: uid('cs'),
+      student_id: studentId,
+      game: input.game,
+      score: input.score,
+      total: input.total,
+      cash_earned: input.cashEarned,
+      wrong_problem_ids: input.wrongProblemIds,
+      played_at: new Date().toISOString(),
+    };
+    this.codingSessions = [session, ...this.codingSessions].slice(0, 500);
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`coding session ${studentId}`, () =>
+        this.client!.from('coding_sessions').insert({
+          student_id: studentId,
+          game: session.game,
+          score: session.score,
+          total: session.total,
+          cash_earned: session.cash_earned,
+          wrong_problem_ids: session.wrong_problem_ids,
+        })
+      );
+    }
+    this.commit();
+    return session;
+  }
+
+  codingSessionsFor(studentId: string, limit = 10): CodingSession[] {
+    return this.codingSessions.filter((s) => s.student_id === studentId).slice(0, limit);
+  }
+
+  allCodingSessions(): CodingSession[] {
+    return this.codingSessions;
+  }
+
+  /** 관리자 화면 — 학생별 코딩 현황 (푼 문제·정답률·오답·게임 판수·오늘 적립) */
+  codingOverview(): {
+    student: Student;
+    solved: number;
+    answered: number;
+    accuracy: number;
+    wrongOpen: number;
+    gameRounds: number;
+    cashToday: number;
+    lastPlayedAt: string | null;
+  }[] {
+    return this.listStudents(true).map((student) => {
+      const logs = this.codingLogsFor(student.id);
+      const correct = logs.filter((l) => l.is_correct).length;
+      const sessions = this.codingSessionsFor(student.id, 500);
+      return {
+        student,
+        solved: new Set(logs.filter((l) => l.is_correct).map((l) => l.problem_id)).size,
+        answered: logs.length,
+        accuracy: logs.length ? Math.round((correct / logs.length) * 100) : 0,
+        wrongOpen: this.codingWrongNotesFor(student.id).length,
+        gameRounds: sessions.length,
+        cashToday: this.todayCashEarned(student.id),
+        lastPlayedAt: logs.length ? logs[logs.length - 1].answered_at : null,
+      };
+    });
   }
 
   private ensureAssignments(student: Student) {
@@ -1376,6 +1625,9 @@ class VocaStore {
     this.shopItems = [];
     this.redemptions = [];
     this.games = [];
+    this.codingLogs = [];
+    this.codingWrongNotes = [];
+    this.codingSessions = [];
     this.settings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     this.seedLocal();
     this.emit();

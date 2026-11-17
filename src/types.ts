@@ -13,6 +13,10 @@ export interface Student {
   active: boolean;
   created_at: string;
   last_seen_at?: string | null;
+  /** 코딩 커리큘럼 레벨 (C1~C4) */
+  coding_level: CodingLevel;
+  /** 원장님이 열어 준 수강 과목 — 이 중에서만 학생 화면 탭이 보입니다 */
+  enabled_subjects: Subject[];
 }
 
 export interface WordSet {
@@ -181,4 +185,121 @@ export interface Session {
   role: 'student' | 'admin';
   studentId?: string;
   name?: string;
+}
+
+/* ------------------------------ 과목 · 코딩 커리큘럼 ------------------------------ */
+
+/** 학생이 수강하는 과목. 영어·코딩 둘 다 켜면 상단 전환 스위치가 보입니다. */
+export type Subject = 'english' | 'coding';
+
+export const SUBJECT_META: Record<Subject, { label: string; icon: string; short: string }> = {
+  english: { label: '영어', icon: '📚', short: '영어' },
+  coding: { label: '코딩', icon: '💻', short: '코딩' },
+};
+
+export type CodingLevel = 'C1' | 'C2' | 'C3' | 'C4';
+
+export const CODING_LEVELS: CodingLevel[] = ['C1', 'C2', 'C3', 'C4'];
+
+export const CODING_LEVEL_META: Record<
+  CodingLevel,
+  { label: string; short: string; grades: string; desc: string; badge: string }
+> = {
+  C1: {
+    label: 'C1 블록·기초',
+    short: 'C1',
+    grades: '초1~3',
+    desc: '스크래치 · 순서도 논리',
+    badge: 'bg-emerald-100 text-emerald-700',
+  },
+  C2: {
+    label: 'C2 파이썬 기초',
+    short: 'C2',
+    grades: '초4~6',
+    desc: '변수 · if · for · 리스트 · 문자열',
+    badge: 'bg-sky-100 text-sky-700',
+  },
+  C3: {
+    label: 'C3 C언어',
+    short: 'C3',
+    grades: '중1~3',
+    desc: 'printf/scanf · 중첩 for · 배열 · 조건문',
+    badge: 'bg-brand-100 text-brand-700',
+  },
+  C4: {
+    label: 'C4 유니티 C#',
+    short: 'C4',
+    grades: '중등~고',
+    desc: 'Start/Update · Vector3 · GetComponent · 충돌',
+    badge: 'bg-violet-100 text-violet-700',
+  },
+};
+
+/** 코딩 문제 종류 — output/blank 는 오늘 미션, bug/order 는 게임, 네 가지 모두 게임에 쓰입니다 */
+export type CodingKind = 'output' | 'blank' | 'bug' | 'order';
+
+export const CODING_KIND_META: Record<CodingKind, { label: string; icon: string }> = {
+  output: { label: '출력 맞히기', icon: '🖨️' },
+  blank: { label: '빈칸 채우기', icon: '✏️' },
+  bug: { label: '버그 찾기', icon: '🐛' },
+  order: { label: '블록 순서', icon: '🧩' },
+};
+
+export interface CodingProblem {
+  id: string;
+  level: CodingLevel;
+  kind: CodingKind;
+  /** 변수 · for · 배열 · Transform 등 소주제 */
+  topic: string;
+  prompt: string;
+  /** output · blank : 화면에 보여 줄 코드 (blank 는 ____ 포함) */
+  code?: string;
+  /** bug : 줄 단위 코드. answerLine 번째 줄이 오류 */
+  lines?: string[];
+  /** order : 정답 순서대로 나열한 블록 (게임에서 섞어 보여 줌) */
+  blocks?: string[];
+  /** output · blank : 선택지 */
+  choices?: string[];
+  /** output · blank : 정답 선택지 index */
+  answer?: number;
+  /** bug : 오류가 있는 줄 index (0부터) */
+  answerLine?: number;
+  explanation: string;
+}
+
+/** 코딩 문항 풀이 로그 */
+export interface CodingLog {
+  id: string;
+  student_id: string;
+  problem_id: string;
+  level: CodingLevel;
+  kind: CodingKind;
+  is_correct: boolean;
+  /** mission | game | review */
+  mode: 'mission' | 'game' | 'review';
+  answered_at: string;
+}
+
+/** 코딩 오답 노트 — 문제 단위로 틀린 횟수를 쌓고, 다시 맞히면 졸업 */
+export interface CodingWrongNote {
+  student_id: string;
+  problem_id: string;
+  level: CodingLevel;
+  miss_count: number;
+  last_wrong_at: string;
+  cleared_at: string | null;
+}
+
+export type CodingGameKey = 'bug' | 'order' | 'speed';
+
+/** 코딩 게임 1판 기록 */
+export interface CodingSession {
+  id: string;
+  student_id: string;
+  game: CodingGameKey;
+  score: number;
+  total: number;
+  cash_earned: number;
+  wrong_problem_ids: string[];
+  played_at: string;
 }
