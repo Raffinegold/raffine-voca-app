@@ -954,25 +954,25 @@ function ShopAdminTab() {
           </p>
           <div className="mt-3 space-y-2">
             {overview.map(({ student, balance, earnedToday }) => (
-              <div key={student.id} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
-                <span className="w-16 truncate text-xs font-bold text-slate-700">{student.name}</span>
-                <div className="flex-1">
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white">
-                    <div
-                      className={cn('h-full rounded-full', earnedToday >= store.cashDailyLimit() ? 'bg-amber-400' : 'bg-brand-400')}
-                      style={{ width: `${store.cashDailyLimit() > 0 ? Math.min(100, (earnedToday / store.cashDailyLimit()) * 100) : 100}%` }}
-                    />
-                  </div>
+              <div key={student.id} className="rounded-xl bg-slate-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-bold text-slate-700">{student.name}</span>
+                  <span className="shrink-0 text-[11px] font-semibold text-slate-500">
+                    오늘 {earnedToday}/{store.cashDailyLimit()}원 · 보유 {balance.toLocaleString()}원
+                  </span>
                 </div>
-                <span className="w-24 text-right text-[11px] font-semibold text-slate-500">
-                  오늘 {earnedToday}/{store.cashDailyLimit()} · {balance.toLocaleString()}원
-                </span>
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white">
+                  <div
+                    className={cn('h-full rounded-full', earnedToday >= store.cashDailyLimit() ? 'bg-amber-400' : 'bg-brand-400')}
+                    style={{ width: `${store.cashDailyLimit() > 0 ? Math.min(100, (earnedToday / store.cashDailyLimit()) * 100) : 100}%` }}
+                  />
+                </div>
               </div>
             ))}
           </div>
         </Card>
 
-        <Card className="p-0">
+        <Card className="overflow-hidden p-0">
           <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
             <SectionTitle sub="신청 즉시 캐시가 차감되고, 취소하면 돌아옵니다">교환 신청 목록</SectionTitle>
             <div className="flex gap-1.5">
@@ -1068,7 +1068,7 @@ function ShopAdminTab() {
         </Card>
       </div>
 
-      <Card className="p-0">
+      <Card className="overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
           <SectionTitle sub="학생 상점에 보이는 순서·가격입니다">상점 상품 관리</SectionTitle>
           <Button size="sm" variant="soft" onClick={openAdd}>

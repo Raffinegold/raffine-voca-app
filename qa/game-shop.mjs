@@ -38,11 +38,15 @@ async function shot(page, name, fullPage = false) {
   if (fullPage) {
     // sticky 헤더가 긴 페이지 캐처 중간에 끼어들지 않게 고정을 잠시 풉니다 (캐처 전용)
     await page.addStyleTag({ content: 'header{position:static !important}' });
-    await page.waitForTimeout(150);
+    // 전체 높이를 한 번 그려 두어야 긴 페이지가 빈 영역 없이 저장됩니다
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(350);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(250);
   }
   for (let attempt = 1; ; attempt += 1) {
     try {
-      await page.screenshot({ path: file, fullPage, animations: 'disabled' });
+      await page.screenshot({ path: file, fullPage });
       break;
     } catch (err) {
       if (attempt >= 3) throw err;
@@ -191,6 +195,14 @@ try {
   if (r4.reward !== 0) throw new Error('상한 이후에도 캐시가 적립됐어요');
   if (r4.balance !== r3.balance) throw new Error('연습 모드에서 잔액이 변했어요');
 
+  // 8쌍(16장) 난이도 전환 확인
+  await page.getByTestId('game-pairs-8').click();
+  await page.waitForTimeout(500);
+  const cards8 = await readCards(page);
+  const pairs8 = new Set(cards8.map((c) => c.pair)).size;
+  log(`8쌍 모드 전환 · 카드 ${cards8.length}장 / ${pairs8}쌍`);
+  if (cards8.length !== 16 || pairs8 !== 8) throw new Error('8쌍 보드가 16장(8쌍)이 아니에요');
+
   /* --------------------------- 2. 상점 교환 신청 --------------------------- */
   await page.getByTestId('nav-shop').click();
   await page.getByText('기프티콘 상점').first().waitFor();
@@ -243,6 +255,21 @@ try {
   // 상태가 바뀐 뒤에도 행이 남아 있도록 ’전체’ 필터로 전환
   await admin.getByRole('button', { name: /^전체 \d+$/ }).click();
   await admin.waitForTimeout(300);
+
+  // 관리자 화면 스크린샷 — 교환 대기 건과 처리 버튼이 보이는 상태로 남깁니다.
+  // (고정 헤더가 긴 캐처 중간에 겹치지 않도록 헤더 고정만 잠시 풉니다)
+  await admin.setViewportSize({ width: 1280, height: 1560 });
+  await admin.addStyleTag({ content: 'header{position:static !important}' });
+  await admin.waitForTimeout(600);
+  await shot(admin, 'qa_voca_admin_shop.png');
+  await admin.reload({ waitUntil: 'load' });
+  await admin.getByText('이번 주 학원 현황').waitFor();
+  await admin.getByTestId('tab-shop').click();
+  await admin.getByText('상점 · 교환 관리').waitFor();
+  await admin.getByRole('button', { name: /^전체 \d+$/ }).click();
+  await admin.setViewportSize({ width: 1280, height: 900 });
+  await admin.waitForTimeout(400);
+  log('관리자 화면 새로고침 후에도 교환 대기 상태 유지 확인');
 
   // 일일 상한 설정 변경 → 복원
   await admin.getByTestId('admin-cash-limit').fill('60');
@@ -301,8 +328,7 @@ try {
   if (await addedRow.count()) throw new Error('상품이 삭제되지 않았어요');
   log('상품 삭제 확인');
 
-  await admin.waitForTimeout(300);
-  await shot(admin, 'qa_voca_admin_shop.png', true);
+
 
   // 학생 화면 새로고침 후 발송 완료 상태 반영 확인 (같은 저장소를 쓰므로 그대로 보입니다)
   await page.goto(`${BASE}/`, { waitUntil: 'load' });
