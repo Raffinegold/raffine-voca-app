@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/raffine-voca-app/sw.js', { scope: '/raffine-voca-app/' })})}
