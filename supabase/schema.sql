@@ -1,0 +1,486 @@
+-- ============================================================================
+--  라피네 영단어 MVP — Supabase 스키마
+--  라피네코딩컴퓨터학원 두정점 / TOSEL 연계 5단계
+--  Supabase 대시보드 → SQL Editor 에 통째로 붙여 실행하세요.
+--  (여러 번 실행해도 되도록 if not exists / drop policy if exists 사용)
+-- ============================================================================
+
+create extension if not exists pgcrypto;
+
+-- ---------------------------------------------------------------------------
+-- 1) 학생
+--    pin_hash: bcrypt 해시 (pgcrypto crypt). 평문 저장 금지.
+-- ---------------------------------------------------------------------------
+create table if not exists public.students (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  class_name text,
+  grade smallint,
+  level smallint not null default 1 check (level between 1 and 5),
+  tosel_level text,
+  pin_hash text not null,
+  nickname text,
+  parent_token text unique,
+  active boolean not null default true,
+  last_seen_at timestamptz,
+  created_at timestamptz default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- 2) 단어 세트 (트랙·일차 단위)
+-- ---------------------------------------------------------------------------
+create table if not exists public.word_sets (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  level smallint not null check (level between 1 and 5),
+  day_index smallint,
+  active boolean not null default true,
+  created_at timestamptz default now(),
+  unique (level, day_index)
+);
+
+-- ---------------------------------------------------------------------------
+-- 3) 단어 (ipa 는 카드 화면 발음기호용 확장 컬럼)
+-- ---------------------------------------------------------------------------
+create table if not exists public.words (
+  id uuid primary key default gen_random_uuid(),
+  set_id uuid references public.word_sets(id) on delete cascade,
+  word text not null,
+  meaning text not null,
+  pos text,
+  ipa text,
+  example text,
+  example_ko text,
+  order_no smallint,
+  unique (set_id, word)
+);
+
+-- ---------------------------------------------------------------------------
+-- 4) 배정 (오늘의 미션 = 학생 × 세트)
+-- ---------------------------------------------------------------------------
+create table if not exists public.assignments (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references public.students(id) on delete cascade,
+  set_id uuid references public.word_sets(id) on delete cascade,
+  assigned_on date not null default current_date,
+  unique (student_id, set_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- 5) 풀이 로그 (문항 단위)
+-- ---------------------------------------------------------------------------
+create table if not exists public.study_logs (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  word_id uuid references public.words(id) on delete cascade,
+  set_id uuid references public.word_sets(id),
+  is_correct boolean not null,
+  mode text check (mode in ('card', 'choice', 'spell')),
+  elapsed_ms int,
+  answered_at timestamptz default now()
+);
+create index if not exists study_logs_student_time on public.study_logs (student_id, answered_at desc);
+
+-- ---------------------------------------------------------------------------
+-- 6) 오답 노트 (간격 반복 상태) — box 0→다음 날, 1→2일, 2→4일, 3→7일, 4=졸업
+-- ---------------------------------------------------------------------------
+create table if not exists public.wrong_notes (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  word_id uuid references public.words(id) on delete cascade,
+  box smallint not null default 0 check (box between 0 and 4),
+  due_date date not null default current_date,
+  miss_count int not null default 1,
+  cleared_at timestamptz,
+  unique (student_id, word_id)
+);
+create index if not exists wrong_notes_due on public.wrong_notes (student_id, due_date);
+
+-- ---------------------------------------------------------------------------
+-- 7) 주간 리포트 스냅샷 (금요일에 복사한 문구 보관)
+-- ---------------------------------------------------------------------------
+create table if not exists public.weekly_reports (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  week_start date not null,
+  words_done int,
+  accuracy int,
+  streak_days int,
+  message text,
+  opened_at timestamptz,
+  unique (student_id, week_start)
+);
+
+-- ---------------------------------------------------------------------------
+-- 8) 레벨 배정 이력 (설계서 4-2 「배정 이력이 남습니다」 구현용 확장 테이블)
+-- ---------------------------------------------------------------------------
+create table if not exists public.level_history (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  from_level smallint,
+  to_level smallint not null,
+  tosel_level text,
+  changed_at timestamptz default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- 9) 학생 세션 (PIN 로그인 후 12시간 유효한 토큰)
+--    브라우저에는 anon 키만 있고, 학생 데이터 접근은 아래 RPC 로만 허용합니다.
+-- ---------------------------------------------------------------------------
+create table if not exists public.student_sessions (
+  token text primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  created_at timestamptz default now(),
+  expires_at timestamptz not null
+);
+create index if not exists student_sessions_expiry on public.student_sessions (expires_at);
+
+-- ============================================================================
+--  RLS (행 수준 보안)
+--  - anon: 개인정보 테이블 접근 불가. 단어장(word_sets, words)만 읽기 허용.
+--  - authenticated(원장님): app_metadata.role = 'admin' 이면 전 테이블.
+--  - 학생: student_sessions 토큰을 받은 RPC 로만 자기 데이터 접근.
+-- ============================================================================
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+as $$
+  select coalesce(
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb -> 'app_metadata' ->> 'role'),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'),
+    ''
+  ) = 'admin';
+$$;
+
+alter table public.students enable row level security;
+alter table public.word_sets enable row level security;
+alter table public.words enable row level security;
+alter table public.assignments enable row level security;
+alter table public.study_logs enable row level security;
+alter table public.wrong_notes enable row level security;
+alter table public.weekly_reports enable row level security;
+alter table public.level_history enable row level security;
+alter table public.student_sessions enable row level security;
+
+-- 원장님 전체 권한
+drop policy if exists admin_all_students on public.students;
+create policy admin_all_students on public.students for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_sets on public.word_sets;
+create policy admin_all_sets on public.word_sets for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_words on public.words;
+create policy admin_all_words on public.words for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_assignments on public.assignments;
+create policy admin_all_assignments on public.assignments for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_logs on public.study_logs;
+create policy admin_all_logs on public.study_logs for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_notes on public.wrong_notes;
+create policy admin_all_notes on public.wrong_notes for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_reports on public.weekly_reports;
+create policy admin_all_reports on public.weekly_reports for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_history on public.level_history;
+create policy admin_all_history on public.level_history for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- 단어장은 학습 콘텐츠라 읽기 공개 (개인정보 없음)
+drop policy if exists public_read_sets on public.word_sets;
+create policy public_read_sets on public.word_sets for select to anon, authenticated using (true);
+
+drop policy if exists public_read_words on public.words;
+create policy public_read_words on public.words for select to anon, authenticated using (true);
+
+-- 학생이 커스텀 JWT(sub=학생 id)를 받은 경우 자기 행만 조회
+drop policy if exists student_read_self on public.students;
+create policy student_read_self on public.students for select to authenticated
+  using (id::text = coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', ''));
+
+drop policy if exists student_read_own_assignments on public.assignments;
+create policy student_read_own_assignments on public.assignments for select to authenticated
+  using (student_id::text = coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', ''));
+
+-- 부모 링크(weekly_reports, students)는 정책을 열지 않습니다.
+-- 학부모 화면은 Edge Function(parent-report)이 service_role 로 집계값만 돌려줍니다.
+
+-- ============================================================================
+--  학생 로그인 / 학습 RPC
+--  SECURITY DEFINER 로 RLS 를 우회하되, 토큰이 없으면 아무것도 돌려주지 않습니다.
+-- ============================================================================
+
+create or replace function public.student_login(p_name text, p_pin text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_student public.students%rowtype;
+  v_token text;
+begin
+  select * into v_student
+    from public.students
+   where lower(trim(name)) = lower(trim(p_name))
+     and active
+   order by created_at
+   limit 1;
+
+  if not found then
+    raise exception 'STUDENT_NOT_FOUND';
+  end if;
+
+  if v_student.pin_hash is null
+     or v_student.pin_hash = ''
+     or crypt(p_pin, v_student.pin_hash) <> v_student.pin_hash then
+    raise exception 'PIN_MISMATCH';
+  end if;
+
+  v_token := encode(gen_random_bytes(24), 'hex');
+  insert into public.student_sessions(token, student_id, expires_at)
+  values (v_token, v_student.id, now() + interval '12 hours');
+
+  update public.students set last_seen_at = now() where id = v_student.id;
+
+  return jsonb_build_object(
+    'token', v_token,
+    'student', to_jsonb(v_student) - 'pin_hash'
+  );
+end;
+$$;
+
+-- 로그인 후 한 번에 받아 가는 학생 데이터 묶음 (미션 계산에 필요한 것 전부)
+create or replace function public.student_bundle(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_session public.student_sessions%rowtype;
+  v_student public.students%rowtype;
+begin
+  select * into v_session
+    from public.student_sessions
+   where token = p_token and expires_at > now();
+  if not found then
+    raise exception 'SESSION_EXPIRED';
+  end if;
+
+  select * into v_student from public.students where id = v_session.student_id;
+  if not found then
+    raise exception 'STUDENT_NOT_FOUND';
+  end if;
+
+  return jsonb_build_object(
+    'student', to_jsonb(v_student) - 'pin_hash',
+    'sets', coalesce((
+      select jsonb_agg(to_jsonb(s)) from public.word_sets s
+       where s.level = v_student.level and s.active
+    ), '[]'::jsonb),
+    'words', coalesce((
+      select jsonb_agg(to_jsonb(w))
+        from public.words w
+        join public.word_sets s on s.id = w.set_id
+       where s.level = v_student.level and s.active
+    ), '[]'::jsonb),
+    'wrong_notes', coalesce((
+      select jsonb_agg(to_jsonb(n)) from public.wrong_notes n
+       where n.student_id = v_student.id
+    ), '[]'::jsonb),
+    'logs', coalesce((
+      select jsonb_agg(to_jsonb(l))
+        from public.study_logs l
+       where l.student_id = v_student.id
+         and l.answered_at > now() - interval '30 days'
+    ), '[]'::jsonb),
+    'progress', coalesce((
+      select jsonb_agg(jsonb_build_object('date', d.day, 'answered', d.cnt))
+        from (
+          select (l.answered_at at time zone 'Asia/Seoul')::date as day, count(*) as cnt
+            from public.study_logs l
+           where l.student_id = v_student.id
+             and l.answered_at > now() - interval '30 days'
+           group by 1
+        ) d
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+-- 문항 1건 저장 + 오답 노트 간격 반복 갱신
+create or replace function public.student_answer(
+  p_token text,
+  p_word_id uuid,
+  p_correct boolean,
+  p_mode text,
+  p_elapsed_ms int default 0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_session public.student_sessions%rowtype;
+  v_set uuid;
+  v_today date := (now() at time zone 'Asia/Seoul')::date;
+  v_box smallint;
+  v_gap int;
+begin
+  select * into v_session
+    from public.student_sessions
+   where token = p_token and expires_at > now();
+  if not found then
+    raise exception 'SESSION_EXPIRED';
+  end if;
+
+  select set_id into v_set from public.words where id = p_word_id;
+
+  insert into public.study_logs(student_id, word_id, set_id, is_correct, mode, elapsed_ms)
+  values (v_session.student_id, p_word_id, v_set, p_correct,
+          case when p_mode in ('card','choice','spell') then p_mode else 'choice' end,
+          greatest(coalesce(p_elapsed_ms, 0), 0));
+
+  if p_correct then
+    select box into v_box from public.wrong_notes
+     where student_id = v_session.student_id and word_id = p_word_id;
+    if found then
+      v_gap := case v_box when 0 then 1 when 1 then 2 when 2 then 4 when 3 then 7 else 7 end;
+      if v_box >= 4 then
+        update public.wrong_notes set cleared_at = coalesce(cleared_at, now())
+         where student_id = v_session.student_id and word_id = p_word_id;
+      else
+        update public.wrong_notes
+           set box = v_box + 1,
+               due_date = v_today + v_gap,
+               cleared_at = case when v_box + 1 >= 4 then now() else null end
+         where student_id = v_session.student_id and word_id = p_word_id;
+      end if;
+    end if;
+  else
+    insert into public.wrong_notes(student_id, word_id, box, due_date, miss_count, cleared_at)
+    values (v_session.student_id, p_word_id, 0, v_today + 1, 1, null)
+    on conflict (student_id, word_id) do update
+      set box = 0,
+          due_date = v_today + 1,
+          miss_count = public.wrong_notes.miss_count + 1,
+          cleared_at = null;
+  end if;
+
+  update public.students set last_seen_at = now() where id = v_session.student_id;
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+-- 원장님: 학생 추가 (bcrypt PIN 발급) — 앱 관리자 화면에서 호출
+create or replace function public.admin_create_student(
+  p_name text,
+  p_grade smallint,
+  p_class_name text,
+  p_nickname text,
+  p_level smallint,
+  p_pin text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_student public.students%rowtype;
+begin
+  if not public.is_admin() then
+    raise exception 'NOT_ADMIN';
+  end if;
+
+  insert into public.students (name, class_name, grade, level, tosel_level, pin_hash, nickname, parent_token)
+  values (
+    trim(p_name),
+    p_class_name,
+    p_grade,
+    greatest(1, least(5, p_level)),
+    case greatest(1, least(5, p_level))
+      when 1 then 'Pre-Starter' when 2 then 'Starter' when 3 then 'Basic' when 4 then 'Junior' else 'High Junior'
+    end,
+    crypt(p_pin, gen_salt('bf')),
+    coalesce(p_nickname, trim(p_name)),
+    encode(gen_random_bytes(16), 'hex')
+  )
+  returning * into v_student;
+
+  insert into public.assignments (student_id, set_id)
+  select v_student.id, ws.id from public.word_sets ws where ws.level = v_student.level and ws.active;
+
+  insert into public.level_history (student_id, from_level, to_level, tosel_level)
+  values (v_student.id, null, v_student.level, v_student.tosel_level);
+
+  return jsonb_build_object('student', to_jsonb(v_student) - 'pin_hash', 'pin', p_pin);
+end;
+$$;
+
+-- 원장님: PIN 재발급
+create or replace function public.admin_reset_pin(p_student_id uuid, p_pin text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'NOT_ADMIN';
+  end if;
+  update public.students set pin_hash = crypt(p_pin, gen_salt('bf')) where id = p_student_id;
+  delete from public.student_sessions where student_id = p_student_id;
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+grant execute on function public.admin_create_student(text, smallint, text, text, smallint, text) to authenticated;
+grant execute on function public.admin_reset_pin(uuid, text) to authenticated;
+
+-- 오래된 세션 정리 (Cron 또는 수동 실행)
+create or replace function public.cleanup_sessions()
+returns void
+language sql
+security definer
+set search_path = public
+as $$ delete from public.student_sessions where expires_at < now(); $$;
+
+-- anon/authenticated 는 테이블 직접 접근 대신 RPC 만 사용
+revoke all on function public.student_login(text, text) from public;
+revoke all on function public.student_bundle(text) from public;
+revoke all on function public.student_answer(text, uuid, boolean, text, int) from public;
+grant execute on function public.student_login(text, text) to anon, authenticated;
+grant execute on function public.student_bundle(text) to anon, authenticated;
+grant execute on function public.student_answer(text, uuid, boolean, text, int) to anon, authenticated;
+
+-- ============================================================================
+--  시드 예시 — 5명 학생 + Level 1 샘플 세트 1개
+--  (앱의 100단어 시드는 src/data/seed.ts 에 있고, 필요하면 아래처럼 넣습니다)
+-- ============================================================================
+-- insert into public.students (name, class_name, grade, level, tosel_level, pin_hash, nickname, parent_token)
+-- values
+--   ('김서연', '초등B', 5, 3, 'Basic', crypt('1111', gen_salt('bf')), '별빛서연', encode(gen_random_bytes(16), 'hex')),
+--   ('박준우', '초등B', 6, 3, 'Basic', crypt('2222', gen_salt('bf')), '코딩준우', encode(gen_random_bytes(16), 'hex'));
+
+-- insert into public.word_sets (name, level, day_index) values ('Level 3 · Day 01', 3, 1);
+-- insert into public.words (set_id, word, meaning, pos, ipa, example, example_ko, order_no)
+-- select id, 'honest', '정직한', 'adj', '/ˈɑːnɪst/', 'An honest answer is always better.', '정직한 대답이 항상 더 좋아요.', 1
+--   from public.word_sets where level = 3 and day_index = 1;
+-- insert into public.assignments (student_id, set_id)
+-- select s.id, ws.id from public.students s join public.word_sets ws on ws.level = s.level;
+
+-- ============================================================================
+--  원장님 계정 만들기 (Supabase Auth)
+--  1) Authentication → Users → Add user 로 이메일/비밀번호 계정 1개 생성
+--  2) 아래처럼 app_metadata 에 role=admin 부여 (service_role 키로만 가능)
+--     update auth.users set raw_app_meta_data = raw_app_meta_data || '{"role":"admin"}'::jsonb
+--      where email = 'wonjang@example.com';
+--  3) 2단계 인증(TOTP)을 켜 두세요. service_role 키는 절대 브라우저에 넣지 않습니다.
+-- ============================================================================

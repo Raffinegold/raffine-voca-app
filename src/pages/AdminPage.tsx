@@ -1,0 +1,957 @@
+import { useMemo, useState } from 'react';
+import { useSession, useVocaStore } from '../app-context';
+import { Badge, Bar, Button, Card, LevelPill, Modal, SectionTitle, useToast } from '../components/ui';
+import ParentReportCard from '../components/ParentReportCard';
+import { parseWordCsv } from '../lib/csv';
+import { buildClassMessage, buildParentMessage, copyText, reportUrl } from '../lib/report';
+import { computeOverview, computeWeekStats } from '../lib/stats';
+import { LEVEL_META, LEVEL_TO_TOSEL, TOSEL_TO_LEVEL, type Level, type Student, type ToselLevel } from '../types';
+import { cn, formatKoTimestamp, pct, todayStr, weekStartStr } from '../lib/util';
+
+type Tab = 'dash' | 'students' | 'words' | 'levels' | 'report';
+
+const TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: 'dash', label: '대시보드', icon: '📊' },
+  { key: 'students', label: '학생', icon: '🧑‍🎓' },
+  { key: 'words', label: '단어장', icon: '📖' },
+  { key: 'levels', label: '레벨 배정', icon: '🎚️' },
+  { key: 'report', label: '금요일 리포트', icon: '💬' },
+];
+
+function download(filename: string, content: string, mime = 'text/csv;charset=utf-8') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export default function AdminPage() {
+  const store = useVocaStore();
+  const { logout } = useSession();
+  const toast = useToast();
+  const [tab, setTab] = useState<Tab>('dash');
+
+  const students = store.listStudents(true);
+  const active = students.filter((s) => s.active);
+
+  return (
+    <div className="min-h-screen pb-safe">
+      <header className="sticky top-0 z-30 border-b border-white/70 bg-white/85 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="grid h-9 w-9 place-items-center rounded-2xl bg-brand-600 text-base text-white shadow-soft">📚</span>
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400">라피네코딩 두정점 · 관리자</p>
+              <p className="text-sm font-bold leading-tight text-slate-900">라피네 영단어</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Badge tone={store.mode === 'supabase' ? 'mint' : 'slate'}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', store.mode === 'supabase' ? 'bg-emerald-500' : 'bg-slate-400')} />
+              {store.mode === 'supabase' ? '실시간 연결' : '데모 모드'}
+            </Badge>
+            <button
+              onClick={() => {
+                download(`rafine_students_backup_${todayStr()}.csv`, store.backupStudentsCsv());
+                toast('학생 명단을 CSV로 내려받았어요');
+              }}
+              className="hidden rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 sm:inline"
+            >
+              백업
+            </button>
+            <button
+              onClick={() => {
+                logout();
+              }}
+              className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+            >
+              나가기
+            </button>
+          </div>
+        </div>
+        <div className="mx-auto hidden max-w-6xl gap-1 px-4 pb-2 md:flex">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              data-testid={`tab-${t.key}`}
+              onClick={() => setTab(t.key)}
+              className={cn(
+                'rounded-xl px-3.5 py-2 text-sm font-semibold transition',
+                tab === t.key ? 'bg-brand-50 text-brand-700' : 'text-slate-500 hover:bg-slate-50'
+              )}
+            >
+              <span className="mr-1.5">{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-4 pb-28 pt-4 md:pb-10">
+        {tab === 'dash' ? <Dashboard onGo={setTab} /> : null}
+        {tab === 'students' ? <StudentsTab /> : null}
+        {tab === 'words' ? <WordsTab /> : null}
+        {tab === 'levels' ? <LevelsTab /> : null}
+        {tab === 'report' ? <ReportTab /> : null}
+      </main>
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-white bg-white/95 backdrop-blur md:hidden">
+        <div className="flex items-stretch justify-around px-1 pb-safe pt-1.5">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              data-testid={`tabm-${t.key}`}
+              onClick={() => setTab(t.key)}
+              className={cn(
+                'flex flex-1 flex-col items-center gap-0.5 rounded-xl py-1.5 text-[10px] font-semibold',
+                tab === t.key ? 'text-brand-700' : 'text-slate-400'
+              )}
+            >
+              <span className="text-base">{t.icon}</span>
+              <span className="whitespace-nowrap">{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+    </div>
+  );
+}
+
+/* --------------------------------- 대시보드 -------------------------------- */
+
+function Dashboard({ onGo }: { onGo: (t: Tab) => void }) {
+  const store = useVocaStore();
+  const overview = computeOverview();
+  const active = store.listStudents();
+  const logs = store
+    .allLogs()
+    .slice()
+    .sort((a, b) => b.answered_at.localeCompare(a.answered_at))
+    .slice(0, 8);
+
+  const headcount = Math.max(1, overview.todayTotal);
+  const kpis = [
+    {
+      label: '이번 주 완료 단어',
+      value: overview.weekWords,
+      unit: '개',
+      tone: 'brand' as const,
+      ratio: Math.min(1, overview.weekWords / Math.max(1, headcount * 12 * 5)),
+    },
+    { label: '오늘 접속', value: overview.activeToday, unit: `/${overview.todayTotal}명`, tone: 'sky' as const, ratio: overview.activeToday / headcount },
+    { label: '오늘 미션 완료', value: overview.todayCompleted, unit: `/${overview.todayTotal}명`, tone: 'mint' as const, ratio: overview.todayCompleted / headcount },
+    { label: '학원 정답률', value: overview.accuracy, unit: '%', tone: 'sun' as const, ratio: overview.accuracy / 100 },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">이번 주 학원 현황</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            {formatKoTimestamp(new Date().toISOString())} 기준 · {weekStartStr()} 주간
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="soft" onClick={() => onGo('levels')}>
+            레벨 배정
+          </Button>
+          <Button size="sm" onClick={() => onGo('report')}>
+            금요일 요약 복사
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {kpis.map((k) => (
+          <Card key={k.label} className="p-4">
+            <p className="text-[11px] font-semibold text-slate-400">{k.label}</p>
+            <p className="mt-1 text-2xl font-extrabold text-slate-900">
+              {k.value}
+              <span className="ml-1 text-xs font-bold text-slate-400">{k.unit}</span>
+            </p>
+            <div className="mt-2">
+              <Bar ratio={k.ratio} tone={k.tone === 'sun' ? 'sun' : k.tone === 'mint' ? 'mint' : 'brand'} />
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <Card>
+          <SectionTitle sub="오늘 배정을 80% 이상 풀면 완료">미완료 학생</SectionTitle>
+          <ul className="mt-3 space-y-2">
+            {overview.incomplete.length === 0 ? (
+              <li className="rounded-2xl bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-700">
+                오늘 전원 완료했어요! 🎉
+              </li>
+            ) : (
+              overview.incomplete.map(({ student, lastSeen }) => (
+                <li key={student.id} className="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2.5">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-white text-xs font-bold text-slate-500">
+                    {student.name.slice(0, 1)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-slate-800">{student.name}</p>
+                    <p className="text-[11px] text-slate-500">
+                      마지막 접속 {formatKoTimestamp(lastSeen)}
+                    </p>
+                  </div>
+                  <LevelPill level={student.level} />
+                </li>
+              ))
+            )}
+          </ul>
+          <p className="mt-3 text-[11px] text-slate-400">학생이 완료하면 Supabase Realtime으로 이 화면이 새로고침 없이 갱신됩니다.</p>
+        </Card>
+
+        <Card>
+          <SectionTitle sub="첫 응답 기준">반별 정답률</SectionTitle>
+          <div className="mt-3 space-y-3">
+            {overview.classAccuracy.map((c) => (
+              <div key={c.className}>
+                <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-500">
+                  <span>
+                    {c.className} <span className="text-slate-400">({c.students}명)</span>
+                  </span>
+                  <span className="text-slate-800">{c.accuracy}%</span>
+                </div>
+                <Bar ratio={c.accuracy / 100} tone={c.accuracy >= 85 ? 'mint' : 'brand'} />
+              </div>
+            ))}
+            {overview.classAccuracy.length === 0 ? <p className="text-sm text-slate-400">학생을 먼저 추가해 주세요.</p> : null}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <Card>
+          <SectionTitle sub="최근 8건">실시간 학습 기록</SectionTitle>
+          <ul className="mt-3 divide-y divide-slate-100">
+            {logs.map((l) => {
+              const st = store.getStudent(l.student_id);
+              const w = store.wordById(l.word_id);
+              return (
+                <li key={l.id} className="flex items-center gap-3 py-2">
+                  <span className={cn('grid h-7 w-7 place-items-center rounded-lg text-xs', l.is_correct ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-500')}>
+                    {l.is_correct ? '✓' : '✕'}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-700">
+                    <span className="font-semibold">{st?.name ?? '학생'}</span> · {w?.word ?? '단어'}{' '}
+                    <span className="text-[11px] text-slate-400">
+                      {l.mode === 'card' ? '카드' : l.mode === 'choice' ? '4지선다' : '스펠링'}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[11px] text-slate-400">{formatKoTimestamp(l.answered_at)}</span>
+                </li>
+              );
+            })}
+            {logs.length === 0 ? <li className="py-6 text-center text-sm text-slate-400">아직 학습 기록이 없어요.</li> : null}
+          </ul>
+        </Card>
+
+        <Card>
+          <SectionTitle sub="재원생 기준">레벨 분포</SectionTitle>
+          <div className="mt-3 space-y-2">
+            {([1, 2, 3, 4, 5] as Level[]).map((lv) => {
+              const count = active.filter((s) => s.level === lv).length;
+              return (
+                <div key={lv} className="flex items-center gap-2">
+                  <LevelPill level={lv} />
+                  <div className="flex-1">
+                    <Bar ratio={active.length ? count / active.length : 0} />
+                  </div>
+                  <span className="w-6 text-right text-xs font-bold text-slate-500">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-4 rounded-xl bg-brand-50 px-3 py-2 text-[11px] leading-relaxed text-brand-700">
+            진단 결과(Pre-Starter~High Junior)를 고르면 레벨 배정 탭에서 한 번에 바꿀 수 있어요.
+          </p>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------- 학생 ---------------------------------- */
+
+function StudentsTab() {
+  const store = useVocaStore();
+  const toast = useToast();
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', grade: 3, class_name: '초등A', nickname: '' });
+  const [busy, setBusy] = useState(false);
+  const [issued, setIssued] = useState<{ student: Student; pin: string } | null>(null);
+  const [query, setQuery] = useState('');
+
+  const students = store
+    .listStudents(true)
+    .filter((s) => !query || s.name.includes(query) || s.class_name.includes(query));
+
+  const submit = async () => {
+    if (!form.name.trim()) return;
+    setBusy(true);
+    try {
+      const res = await store.addStudent({
+        name: form.name,
+        grade: Number(form.grade),
+        class_name: form.class_name,
+        nickname: form.nickname || form.name,
+        level: 1,
+      });
+      setIssued(res);
+      setAddOpen(false);
+      setForm({ name: '', grade: 3, class_name: '초등A', nickname: '' });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '학생 추가에 실패했어요', 'err');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reissue = async (st: Student) => {
+    try {
+      const pin = await store.resetPin(st.id);
+      setIssued({ student: st, pin });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'PIN 재발급에 실패했어요', 'err');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">학생 관리</h1>
+          <p className="mt-0.5 text-sm text-slate-500">재원생 {students.filter((s) => s.active).length}명 · 비활성 {students.filter((s) => !s.active).length}명</p>
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="이름·반 검색"
+            className="w-36 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand-400"
+          />
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            + 학생 추가
+          </Button>
+        </div>
+      </div>
+
+      <Card className="overflow-hidden p-0">
+        <div className="overflow-x-auto thin-scroll">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="px-4 py-3 font-semibold">이름</th>
+                <th className="px-3 py-3 font-semibold">반 · 학년</th>
+                <th className="px-3 py-3 font-semibold">레벨</th>
+                <th className="px-3 py-3 font-semibold">닉네임</th>
+                <th className="px-3 py-3 font-semibold">마지막 접속</th>
+                <th className="px-3 py-3 text-right font-semibold">관리</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {students.map((st) => (
+                <tr key={st.id} className={cn(!st.active && 'opacity-50')}>
+                  <td className="px-4 py-3">
+                    <p className="font-bold text-slate-800">{st.name}</p>
+                    <p className="text-[11px] text-slate-400">가입 {formatKoTimestamp(st.created_at)}</p>
+                  </td>
+                  <td className="px-3 py-3 text-slate-600">
+                    {st.class_name} · {LEVEL_META[st.level].grades}
+                  </td>
+                  <td className="px-3 py-3">
+                    <LevelPill level={st.level} />
+                    <span className="ml-1.5 text-[10px] text-slate-400">{st.tosel_level}</span>
+                  </td>
+                  <td className="px-3 py-3 text-slate-600">{st.nickname}</td>
+                  <td className="px-3 py-3 text-[12px] text-slate-500">{formatKoTimestamp(st.last_seen_at)}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex justify-end gap-1">
+                      <button
+                        onClick={() => reissue(st)}
+                        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                      >
+                        PIN 재발급
+                      </button>
+                      <button
+                        onClick={() => store.setStudentActive(st.id, !st.active)}
+                        className={cn(
+                          'rounded-lg px-2 py-1 text-[11px] font-semibold',
+                          st.active ? 'bg-rose-50 text-rose-600 hover:bg-rose-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        )}
+                      >
+                        {st.active ? '비활성화' : '다시 활성'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <p className="text-[11px] leading-relaxed text-slate-400">
+        PIN은 평문으로 저장하지 않고 해시로 보관해요. 화면에 나온 PIN은 발급 직후 한 번만 보여 드립니다. 학생에게 종이로 전달하세요.
+      </p>
+
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="학생 추가"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAddOpen(false)}>
+              취소
+            </Button>
+            <Button onClick={submit} disabled={busy || !form.name.trim()}>
+              추가하고 PIN 발급
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="sm:col-span-2">
+            <span className="text-xs font-semibold text-slate-500">이름</span>
+            <input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="예) 김서연"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-brand-400"
+            />
+          </label>
+          <label>
+            <span className="text-xs font-semibold text-slate-500">학년</span>
+            <select
+              value={form.grade}
+              onChange={(e) => setForm({ ...form, grade: Number(e.target.value) })}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-brand-400"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((g) => (
+                <option key={g} value={g}>
+                  {g <= 6 ? `초${g}` : g <= 9 ? `중${g - 6}` : `고${g - 9}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="text-xs font-semibold text-slate-500">반</span>
+            <input
+              value={form.class_name}
+              onChange={(e) => setForm({ ...form, class_name: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-brand-400"
+            />
+          </label>
+          <label className="sm:col-span-2">
+            <span className="text-xs font-semibold text-slate-500">닉네임 (랭킹에 표시 · 선택)</span>
+            <input
+              value={form.nickname}
+              onChange={(e) => setForm({ ...form, nickname: e.target.value })}
+              placeholder="예) 별빛서연"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-brand-400"
+            />
+          </label>
+        </div>
+        <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
+          추가하면 4자리 PIN이 자동 발급되고 Level 1로 시작해요. 진단 결과에 따라 레벨 배정 탭에서 바로 바꿀 수 있습니다.
+        </p>
+      </Modal>
+
+      <Modal open={!!issued} onClose={() => setIssued(null)} title="PIN 발급 완료">
+        {issued ? (
+          <div className="text-center">
+            <p className="text-sm text-slate-500">{issued.student.name} 학생의 PIN</p>
+            <p className="mt-3 rounded-2xl bg-brand-50 py-5 text-5xl font-extrabold tracking-[0.35em] text-brand-700">
+              {issued.pin}
+            </p>
+            <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+              지금 화면을 닫으면 다시 볼 수 없어요. 종이에 적어 학생에게 전달해 주세요.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="ghost"
+                className="flex-1"
+                onClick={async () => {
+                  const ok = await copyText(`${issued.student.name} PIN ${issued.pin}`);
+                  toast(ok ? 'PIN을 복사했어요' : '복사에 실패했어요', ok ? 'ok' : 'err');
+                }}
+              >
+                복사
+              </Button>
+              <Button className="flex-1" onClick={() => setIssued(null)}>
+                확인
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+    </div>
+  );
+}
+
+/* ---------------------------------- 단어장 --------------------------------- */
+
+const SAMPLE_CSV = `word,meaning,pos,example,example_ko,order_no
+confident,자신감 있는,adj,I feel confident before the demo.,나는 시연 전에 자신감이 있어요.,1
+repeat,반복하다,v,Repeat the word three times.,그 단어를 세 번 반복하세요.,2
+curious,호기심 많은,adj,She is curious about robots.,그녀는 로봇에 호기심이 많아요.,3`;
+
+function WordsTab() {
+  const store = useVocaStore();
+  const toast = useToast();
+  const [level, setLevel] = useState<Level>(3);
+  const [day, setDay] = useState(3);
+  const [text, setText] = useState('');
+  const parsed = useMemo(() => parseWordCsv(text), [text]);
+  const validRows = parsed.rows.filter((r) => r.errors.length === 0);
+
+  const counts = ([1, 2, 3, 4, 5] as Level[]).map((lv) => ({
+    level: lv,
+    words: store.wordsForLevel(lv).length,
+    sets: store.listWordSets(lv).length,
+  }));
+
+  const save = () => {
+    if (!validRows.length) return;
+    const res = store.addWordsFromCsv(level, day, validRows);
+    toast(`Level ${level} Day ${String(day).padStart(2, '0')}에 ${res.added}단어를 추가했어요`);
+    setText('');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-extrabold text-slate-900">단어장 · CSV 업로드</h1>
+        <p className="mt-0.5 text-sm text-slate-500">엑셀에서 CSV UTF-8(BOM)로 저장하면 한글이 깨지지 않아요.</p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-5">
+        {counts.map((c) => (
+          <Card key={c.level} className="p-3">
+            <div className="flex items-center justify-between">
+              <LevelPill level={c.level} />
+              <span className="text-xs font-bold text-slate-700">{c.words}단어</span>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">{c.sets}세트 · 목표 {LEVEL_META[c.level].cumulative.toLocaleString()}단어</p>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <SectionTitle sub="헤더: word,meaning,pos,example,example_ko,order_no">업로드할 CSV</SectionTitle>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <select
+              value={level}
+              onChange={(e) => setLevel(Number(e.target.value) as Level)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-brand-400"
+            >
+              {([1, 2, 3, 4, 5] as Level[]).map((lv) => (
+                <option key={lv} value={lv}>
+                  Level {lv} ({LEVEL_META[lv].grades})
+                </option>
+              ))}
+            </select>
+            <select
+              value={day}
+              onChange={(e) => setDay(Number(e.target.value))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-brand-400"
+            >
+              {Array.from({ length: 20 }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>
+                  Day {String(d).padStart(2, '0')}
+                </option>
+              ))}
+            </select>
+            <label className="cursor-pointer rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50">
+              파일 선택
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const content = await file.text();
+                  setText(content);
+                  toast(`${file.name}을 불러왔어요`);
+                }}
+              />
+            </label>
+            <button
+              onClick={() => download('rafine_words_template.csv', '\uFEFF' + SAMPLE_CSV)}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-50"
+            >
+              양식 내려받기
+            </button>
+          </div>
+
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={SAMPLE_CSV}
+            rows={9}
+            className="mt-3 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 font-mono text-[12px] leading-relaxed outline-none focus:border-brand-400 focus:bg-white"
+          />
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold">
+            <Badge tone="mint">정상 {parsed.okCount}행</Badge>
+            <Badge tone="rose">오류 {parsed.rows.length - parsed.okCount}행</Badge>
+            {parsed.missingHeader.length ? <Badge tone="sun">헤더 누락: {parsed.missingHeader.join(', ')}</Badge> : null}
+            <span className="flex-1" />
+            <Button size="sm" onClick={save} disabled={!validRows.length}>
+              미리보기 확인 후 저장
+            </Button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+            빈 칸·중복·영단어 오타 의심 행은 저장에서 제외돼요. 저장 후에도 기존 단어는 그대로 남습니다.
+          </p>
+        </Card>
+
+        <Card>
+          <SectionTitle sub="최대 10행 미리보기">검증 결과</SectionTitle>
+          {parsed.rows.length === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-400">CSV를 붙여넣으면 여기에서 바로 검사해 드려요.</p>
+          ) : (
+            <div className="mt-3 overflow-x-auto thin-scroll">
+              <table className="w-full min-w-[520px] text-left text-[12px]">
+                <thead className="text-[10px] uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-2 py-2">행</th>
+                    <th className="px-2 py-2">단어</th>
+                    <th className="px-2 py-2">뜻</th>
+                    <th className="px-2 py-2">품사</th>
+                    <th className="px-2 py-2">예문</th>
+                    <th className="px-2 py-2">검사</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {parsed.rows.slice(0, 10).map((r) => (
+                    <tr key={r.line} className={cn(r.errors.length ? 'bg-rose-50/60' : '')}>
+                      <td className="px-2 py-2 text-slate-400">{r.line}</td>
+                      <td className="px-2 py-2 font-semibold text-slate-800">{r.word || '—'}</td>
+                      <td className="px-2 py-2 text-slate-600">{r.meaning || '—'}</td>
+                      <td className="px-2 py-2 text-slate-500">{r.pos}</td>
+                      <td className="max-w-[160px] truncate px-2 py-2 text-slate-500">{r.example}</td>
+                      <td className="px-2 py-2">
+                        {r.errors.length ? (
+                          <span className="text-rose-600">{r.errors.join(' / ')}</span>
+                        ) : (
+                          <span className="text-emerald-600">정상</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => {
+                download(`rafine_words_L${level}.csv`, store.wordsCsv(level));
+                toast(`Level ${level} 단어장을 CSV로 내려받았어요`);
+              }}
+              className="text-[11px] font-semibold text-brand-600 hover:underline"
+            >
+              Level {level} 현재 단어장 CSV로 내려받기
+            </button>
+          </div>
+        </Card>
+      </div>
+
+      <Card>
+        <SectionTitle sub="트랙별 세트">현재 단어 세트</SectionTitle>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {store.listWordSets().map((s) => (
+            <span key={s.id} className="rounded-xl bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+              {s.name} · {store.words.filter((w) => w.set_id === s.id).length}단어
+            </span>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* -------------------------------- 레벨 배정 -------------------------------- */
+
+function LevelsTab() {
+  const store = useVocaStore();
+  const toast = useToast();
+  const students = store.listStudents();
+  const [draft, setDraft] = useState<Record<string, ToselLevel>>({});
+  const history = store.listLevelHistory().slice(0, 8);
+
+  const assign = (st: Student, tosel: ToselLevel) => {
+    const level = TOSEL_TO_LEVEL[tosel];
+    store.setStudentLevel(st.id, level);
+    toast(`${st.name} 학생을 Level ${level} (${tosel} 대비)로 배정했어요`);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-extrabold text-slate-900">레벨 배정</h1>
+        <p className="mt-0.5 text-sm text-slate-500">
+          친구 원장님의 무료 진단 결과를 고르면 앱 트랙이 자동으로 정해집니다. 배정 이력이 남아요.
+        </p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+        <Card className="overflow-hidden p-0">
+          <div className="overflow-x-auto thin-scroll">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">학생</th>
+                  <th className="px-3 py-3 font-semibold">현재</th>
+                  <th className="px-3 py-3 font-semibold">진단 결과</th>
+                  <th className="px-3 py-3 text-right font-semibold">배정</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {students.map((st) => {
+                  const value = draft[st.id] ?? st.tosel_level;
+                  const targetLevel = TOSEL_TO_LEVEL[value as ToselLevel];
+                  const changed = targetLevel !== st.level;
+                  return (
+                    <tr key={st.id}>
+                      <td className="px-4 py-3">
+                        <p className="font-bold text-slate-800">{st.name}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {st.class_name} · {st.nickname}
+                        </p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <LevelPill level={st.level} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <select
+                          value={value}
+                          onChange={(e) => setDraft({ ...draft, [st.id]: e.target.value as ToselLevel })}
+                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-brand-400"
+                        >
+                          {(['Pre-Starter', 'Starter', 'Basic', 'Junior', 'High Junior'] as ToselLevel[]).map((t) => (
+                            <option key={t} value={t}>
+                              {t} → L{TOSEL_TO_LEVEL[t]}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <Button size="sm" variant={changed ? 'primary' : 'ghost'} disabled={!changed} onClick={() => assign(st, value as ToselLevel)}>
+                          {changed ? '배정' : '배정됨'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <div className="space-y-4">
+          <Card>
+            <SectionTitle sub="진단 결과와 앱 트랙">TOSEL 대응표</SectionTitle>
+            <ul className="mt-3 space-y-2 text-xs">
+              {(['Pre-Starter', 'Starter', 'Basic', 'Junior', 'High Junior'] as ToselLevel[]).map((t) => {
+                const lv = TOSEL_TO_LEVEL[t];
+                return (
+                  <li key={t} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+                    <span className="w-24 font-bold text-slate-700">{t}</span>
+                    <span className="text-slate-400">→</span>
+                    <LevelPill level={lv} />
+                    <span className="ml-auto text-slate-500">{LEVEL_META[lv].grades}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+              표기는 Level 1~5로 통일합니다. 공식 TOSEL 교재와 혼동되지 않도록 「토셀 대비」 대신 「TOSEL ○○ 대비」로만 표기해요.
+            </p>
+          </Card>
+
+          <Card>
+            <SectionTitle sub="최근 변경">배정 이력</SectionTitle>
+            <ul className="mt-3 space-y-2">
+              {history.length === 0 ? <li className="text-sm text-slate-400">아직 변경 이력이 없어요.</li> : null}
+              {history.map((h) => {
+                const st = store.getStudent(h.student_id);
+                return (
+                  <li key={h.id} className="rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                    <span className="font-bold text-slate-700">{st?.name ?? '학생'}</span>{' '}
+                    <span className="text-slate-500">
+                      {h.from_level ? `L${h.from_level} → ` : ''}L{h.to_level} ({h.tosel_level})
+                    </span>
+                    <span className="ml-1 text-slate-400">· {formatKoTimestamp(h.changed_at)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ 금요일 리포트 ------------------------------ */
+
+function ReportTab() {
+  const store = useVocaStore();
+  const toast = useToast();
+  const [className, setClassName] = useState('전체');
+  const [preview, setPreview] = useState<Student | null>(null);
+  const students = store.listStudents();
+  const classes = ['전체', ...new Set(students.map((s) => s.class_name))];
+  const target = students.filter((s) => className === '전체' || s.class_name === className);
+  const entries = target.map((student) => ({ student, stats: computeWeekStats(student) }));
+
+  const copyOne = async (student: Student) => {
+    const stats = computeWeekStats(student);
+    const message = buildParentMessage(student, stats);
+    const ok = await copyText(message);
+    store.saveReport({
+      student_id: student.id,
+      week_start: weekStartStr(),
+      words_done: stats.wordsDone,
+      accuracy: stats.accuracy,
+      streak_days: stats.streakDays,
+      message,
+      opened_at: null,
+    });
+    toast(ok ? '복사됐어요. 카카오톡에 붙여넣으세요' : '복사에 실패했어요', ok ? 'ok' : 'err');
+  };
+
+  const copyAll = async () => {
+    const message = buildClassMessage(entries);
+    const ok = await copyText(message);
+    entries.forEach(({ student, stats }) =>
+      store.saveReport({
+        student_id: student.id,
+        week_start: weekStartStr(),
+        words_done: stats.wordsDone,
+        accuracy: stats.accuracy,
+        streak_days: stats.streakDays,
+        message: buildParentMessage(student, stats),
+        opened_at: null,
+      })
+    );
+    toast(ok ? `${entries.length}명 요약을 복사했어요. 카톡에 붙여넣으세요` : '복사에 실패했어요', ok ? 'ok' : 'err');
+  };
+
+  const previewStats = preview ? computeWeekStats(preview) : null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">금요일 학부모 요약</h1>
+          <p className="mt-0.5 text-sm text-slate-500">복사해서 카카오톡에 붙여넣기만 하면 돼요. 자동 발송은 하지 않습니다.</p>
+        </div>
+        <Button data-testid="copy-all" size="sm" onClick={copyAll} disabled={!entries.length}>
+          {className === '전체' ? '전체 복사' : `${className} 전체 복사`}
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {classes.map((c) => (
+          <button
+            key={c}
+            onClick={() => setClassName(c)}
+            className={cn(
+              'rounded-full px-3 py-1.5 text-xs font-semibold transition',
+              className === c ? 'bg-brand-600 text-white' : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50'
+            )}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {entries.map(({ student, stats }) => (
+          <Card key={student.id} className="flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                  {student.name}
+                  <LevelPill level={student.level} />
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {student.class_name} · {stats.wordsDone}단어 · 정답률 {stats.accuracy}% · {stats.streakDays}일 연속
+                </p>
+              </div>
+              <span className="rounded-lg bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-400">{student.nickname}</span>
+            </div>
+            <pre className="whitespace-pre-wrap rounded-2xl bg-slate-50 p-3 font-sans text-[11.5px] leading-relaxed text-slate-600">
+              {buildParentMessage(student, stats)}
+            </pre>
+            <div className="flex gap-2">
+              <Button data-testid="copy-one" size="sm" className="flex-1" onClick={() => copyOne(student)}>
+                복사
+              </Button>
+              <Button data-testid="preview-report" size="sm" variant="ghost" className="flex-1" onClick={() => setPreview(student)}>
+                리포트 미리보기
+              </Button>
+            </div>
+          </Card>
+        ))}
+        {entries.length === 0 ? (
+          <Card>
+            <p className="py-8 text-center text-sm text-slate-400">이 반에는 학생이 없습니다.</p>
+          </Card>
+        ) : null}
+      </div>
+
+      <Card>
+        <SectionTitle sub="복사 후 안내">이렇게 보내 주세요</SectionTitle>
+        <ol className="mt-3 space-y-1.5 text-xs leading-relaxed text-slate-500">
+          <li>1. 학생별 「복사」 → 카카오톡 학부모 채팅방에 붙여넣기 (학생 1명당 3초)</li>
+          <li>2. 반 전체는 3~4장 분량이라 반을 나눠 복사하는 걸 권장해요</li>
+          <li>3. 문구는 쉼표·슬래시·줄바꿈만 사용해 카톡에서 걸러지지 않게 했어요</li>
+          <li>4. 링크를 누르면 학부모는 우리 아이 리포트만 볼 수 있어요 (로그인 없음)</li>
+        </ol>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" onClick={() => { download(`rafine_weekly_${weekStartStr()}.csv`, store.backupStudentsCsv()); toast('학생 명단 백업을 내려받았어요'); }}>
+            학생 명단 백업
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (entries[0]) {
+                const url = reportUrl(entries[0].student);
+                copyText(url).then((ok) => toast(ok ? '리포트 링크를 복사했어요' : '복사 실패', ok ? 'ok' : 'err'));
+              }
+            }}
+          >
+            첫 학생 리포트 링크 복사
+          </Button>
+        </div>
+      </Card>
+
+      <p className="text-[11px] leading-relaxed text-slate-400">
+        정답률은 첫 응답 기준입니다. 재시도를 포함하면 숫자가 의미를 잃기 때문이에요. 이번 주 누적 {pct(
+          entries.reduce((sum, e) => sum + e.stats.correct, 0),
+          Math.max(1, entries.reduce((sum, e) => sum + e.stats.answered, 0))
+        )}% (문항 기준).
+      </p>
+
+      <Modal open={!!preview} onClose={() => setPreview(null)} title="학부모 리포트 미리보기" wide>
+        {preview && previewStats ? <ParentReportCard student={preview} stats={previewStats} /> : null}
+      </Modal>
+    </div>
+  );
+}
