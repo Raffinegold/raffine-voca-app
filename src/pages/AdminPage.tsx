@@ -5,16 +5,17 @@ import ParentReportCard from '../components/ParentReportCard';
 import { parseWordCsv } from '../lib/csv';
 import { buildClassMessage, buildParentMessage, copyText, reportUrl } from '../lib/report';
 import { computeOverview, computeWeekStats } from '../lib/stats';
-import { LEVEL_META, LEVEL_TO_TOSEL, TOSEL_TO_LEVEL, type Level, type Student, type ToselLevel } from '../types';
+import { LEVEL_META, LEVEL_TO_TOSEL, TOSEL_TO_LEVEL, type Level, type RedemptionRequest, type ShopItem, type Student, type ToselLevel } from '../types';
 import { cn, formatKoTimestamp, pct, todayStr, weekStartStr } from '../lib/util';
 
-type Tab = 'dash' | 'students' | 'words' | 'levels' | 'report';
+type Tab = 'dash' | 'students' | 'words' | 'levels' | 'shop' | 'report';
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'dash', label: '대시보드', icon: '📊' },
   { key: 'students', label: '학생', icon: '🧑‍🎓' },
   { key: 'words', label: '단어장', icon: '📖' },
   { key: 'levels', label: '레벨 배정', icon: '🎚️' },
+  { key: 'shop', label: '상점·교환', icon: '🎁' },
   { key: 'report', label: '금요일 리포트', icon: '💬' },
 ];
 
@@ -97,6 +98,7 @@ export default function AdminPage() {
         {tab === 'students' ? <StudentsTab /> : null}
         {tab === 'words' ? <WordsTab /> : null}
         {tab === 'levels' ? <LevelsTab /> : null}
+        {tab === 'shop' ? <ShopAdminTab /> : null}
         {tab === 'report' ? <ReportTab /> : null}
       </main>
 
@@ -802,6 +804,402 @@ function LevelsTab() {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------ 상점 · 교환 관리 ------------------------------ */
+
+const STATUS_META: Record<RedemptionRequest['status'], { text: string; cls: string }> = {
+  pending: { text: '신청 대기', cls: 'bg-amber-100 text-amber-700' },
+  sent: { text: '발송 완료', cls: 'bg-emerald-100 text-emerald-700' },
+  canceled: { text: '취소·환불', cls: 'bg-slate-100 text-slate-500' },
+};
+
+function ShopAdminTab() {
+  const store = useVocaStore();
+  const toast = useToast();
+  const [limitDraft, setLimitDraft] = useState(String(store.cashDailyLimit()));
+  const [itemModal, setItemModal] = useState<{ mode: 'add' | 'edit'; item?: ShopItem } | null>(null);
+  const [form, setForm] = useState({ name: '', price: '', emoji: '🎁' });
+  const [filter, setFilter] = useState<'pending' | 'all'>('pending');
+
+  const items = store.listShopItems(true);
+  const allRequests = store.listRedemptions();
+  const pending = allRequests.filter((r) => r.status === 'pending');
+  const requests = filter === 'pending' ? pending : allRequests;
+  const overview = store.cashOverview();
+  const totalBalance = overview.reduce((sum, o) => sum + o.balance, 0);
+  const todayPaid = overview.reduce((sum, o) => sum + o.earnedToday, 0);
+  const sentThisWeek = allRequests.filter((r) => r.status === 'sent').length;
+
+  const saveLimit = () => {
+    const value = Number(limitDraft);
+    if (!Number.isFinite(value) || value < 0) {
+      toast('0원 이상의 숫자를 넣어 주세요', 'err');
+      return;
+    }
+    store.setCashDailyLimit(value);
+    setLimitDraft(String(store.cashDailyLimit()));
+    toast(`하루 적립 상한을 ${store.cashDailyLimit()}원으로 바꿨어요`);
+  };
+
+  const openAdd = () => {
+    setForm({ name: '', price: '', emoji: '🎁' });
+    setItemModal({ mode: 'add' });
+  };
+
+  const openEdit = (item: ShopItem) => {
+    setForm({ name: item.name, price: String(item.price), emoji: item.emoji });
+    setItemModal({ mode: 'edit', item });
+  };
+
+  const saveItem = () => {
+    const price = Number(form.price);
+    if (!form.name.trim()) {
+      toast('상품명을 입력해 주세요', 'err');
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      toast('가격은 1원 이상이어야 해요', 'err');
+      return;
+    }
+    try {
+      if (itemModal?.mode === 'edit' && itemModal.item) {
+        store.updateShopItem(itemModal.item.id, { name: form.name, price, emoji: form.emoji });
+        toast(`${form.name.trim()} 상품을 수정했어요`);
+      } else {
+        store.addShopItem({ name: form.name, price, emoji: form.emoji });
+        toast(`${form.name.trim()} 상품을 추가했어요`);
+      }
+      setItemModal(null);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '저장에 실패했어요', 'err');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-extrabold text-slate-900">상점 · 교환 관리</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            짝맞추기 게임 보상은 하루 상한까지만 쌓여요. 신청이 들어오면 발송 완료 또는 취소(환불)로 정리해 주세요.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="soft" data-testid="admin-shop-add" onClick={openAdd}>
+            + 상품 추가
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">교환 대기</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900" data-testid="admin-pending-count">
+            {pending.length}
+            <span className="ml-1 text-xs font-bold text-slate-400">건</span>
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">학생 화면 ’신청 대기’와 같은 값</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">오늘 지급한 캐시</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900">
+            {todayPaid.toLocaleString()}
+            <span className="ml-1 text-xs font-bold text-slate-400">원</span>
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">상한 {store.cashDailyLimit()}원 × 학생 수 이내</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">학생 보유 캐시 합계</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900">
+            {totalBalance.toLocaleString()}
+            <span className="ml-1 text-xs font-bold text-slate-400">원</span>
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">미교환 잔액 (부채 성격)</p>
+        </Card>
+        <Card className="p-4">
+          <p className="text-[11px] font-semibold text-slate-400">발송 완료 누계</p>
+          <p className="mt-1 text-2xl font-extrabold text-slate-900">
+            {sentThisWeek}
+            <span className="ml-1 text-xs font-bold text-slate-400">건</span>
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">전체 기간 기준</p>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+        <Card>
+          <SectionTitle sub="학생 1인 · 하루 기준">일일 캐시 적립 상한</SectionTitle>
+          <div className="mt-3 flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                data-testid="admin-cash-limit"
+                type="number"
+                min={0}
+                step={10}
+                value={limitDraft}
+                onChange={(e) => setLimitDraft(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-8 text-right text-lg font-bold text-slate-900 outline-none focus:border-brand-400"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">원</span>
+            </div>
+            <Button data-testid="admin-cash-limit-save" onClick={saveLimit} disabled={Number(limitDraft) === store.cashDailyLimit()}>
+              저장
+            </Button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+            기본 50원. 상한을 채운 학생은 ’연습 모드’로 계속 플레이할 수 있고 캐시는 더 쌓이지 않아요. 이미 모은 잔액은 그대로 남습니다.
+          </p>
+          <div className="mt-3 space-y-2">
+            {overview.map(({ student, balance, earnedToday }) => (
+              <div key={student.id} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+                <span className="w-16 truncate text-xs font-bold text-slate-700">{student.name}</span>
+                <div className="flex-1">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white">
+                    <div
+                      className={cn('h-full rounded-full', earnedToday >= store.cashDailyLimit() ? 'bg-amber-400' : 'bg-brand-400')}
+                      style={{ width: `${store.cashDailyLimit() > 0 ? Math.min(100, (earnedToday / store.cashDailyLimit()) * 100) : 100}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="w-24 text-right text-[11px] font-semibold text-slate-500">
+                  오늘 {earnedToday}/{store.cashDailyLimit()} · {balance.toLocaleString()}원
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
+            <SectionTitle sub="신청 즉시 캐시가 차감되고, 취소하면 돌아옵니다">교환 신청 목록</SectionTitle>
+            <div className="flex gap-1.5">
+              {(
+                [
+                  ['pending', `대기 ${pending.length}`],
+                  ['all', `전체 ${allRequests.length}`],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setFilter(key)}
+                  className={cn(
+                    'rounded-full px-3 py-1.5 text-xs font-semibold transition',
+                    filter === key ? 'bg-brand-600 text-white' : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="overflow-x-auto thin-scroll">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="px-4 py-2.5 font-semibold">학생</th>
+                  <th className="px-3 py-2.5 font-semibold">상품</th>
+                  <th className="px-3 py-2.5 font-semibold">금액</th>
+                  <th className="px-3 py-2.5 font-semibold">신청</th>
+                  <th className="px-3 py-2.5 font-semibold">상태</th>
+                  <th className="px-3 py-2.5 text-right font-semibold">처리</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {requests.map((r) => {
+                  const st = store.getStudent(r.student_id);
+                  const meta = STATUS_META[r.status];
+                  return (
+                    <tr key={r.id} data-testid={`admin-redeem-row-${r.id}`}>
+                      <td className="px-4 py-3">
+                        <p className="font-bold text-slate-800">{st?.name ?? '학생'}</p>
+                        <p className="text-[11px] text-slate-400">{st?.class_name ?? '—'}</p>
+                      </td>
+                      <td className="px-3 py-3 text-slate-700">{r.item_name}</td>
+                      <td className="px-3 py-3 font-semibold text-slate-800">{r.price.toLocaleString()}원</td>
+                      <td className="px-3 py-3 text-[12px] text-slate-500">{formatKoTimestamp(r.requested_at)}</td>
+                      <td className="px-3 py-3">
+                        <span className={cn('rounded-full px-2 py-1 text-[11px] font-bold', meta.cls)}>{meta.text}</span>
+                        {r.handled_at ? (
+                          <p className="mt-0.5 text-[10px] text-slate-400">{formatKoTimestamp(r.handled_at)}</p>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex justify-end gap-1">
+                          <button
+                            data-testid={`admin-redeem-send-${r.id}`}
+                            disabled={r.status !== 'pending'}
+                            onClick={() => {
+                              store.markRedemptionSent(r.id);
+                              toast(`${st?.name ?? '학생'} · ${r.item_name} 발송 완료로 표시했어요`);
+                            }}
+                            className="rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-30"
+                          >
+                            발송 완료
+                          </button>
+                          <button
+                            data-testid={`admin-redeem-cancel-${r.id}`}
+                            disabled={r.status !== 'pending'}
+                            onClick={() => {
+                              store.cancelRedemption(r.id);
+                              toast(`${r.price.toLocaleString()}원을 ${st?.name ?? '학생'}에게 돌려줬어요`);
+                            }}
+                            className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600 hover:bg-rose-100 disabled:opacity-30"
+                          >
+                            취소(환불)
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {requests.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-400">
+                      {filter === 'pending' ? '교환 대기 중인 신청이 없어요.' : '아직 교환 신청이 없어요.'}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
+          <SectionTitle sub="학생 상점에 보이는 순서·가격입니다">상점 상품 관리</SectionTitle>
+          <Button size="sm" variant="soft" onClick={openAdd}>
+            + 상품 추가
+          </Button>
+        </div>
+        <div className="overflow-x-auto thin-scroll">
+          <table className="w-full min-w-[520px] text-left text-sm">
+            <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="px-4 py-2.5 font-semibold">상품</th>
+                <th className="px-3 py-2.5 font-semibold">가격</th>
+                <th className="px-3 py-2.5 font-semibold">노출</th>
+                <th className="px-3 py-2.5 text-right font-semibold">관리</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {items.map((item) => (
+                <tr key={item.id} data-testid={`admin-item-row-${item.id}`} className={cn(!item.active && 'opacity-50')}>
+                  <td className="px-4 py-3">
+                    <p className="flex items-center gap-2 font-bold text-slate-800">
+                      <span className="text-lg">{item.emoji}</span>
+                      {item.name}
+                    </p>
+                  </td>
+                  <td className="px-3 py-3 font-semibold text-slate-700">{item.price.toLocaleString()}원</td>
+                  <td className="px-3 py-3">
+                    <button
+                      data-testid={`admin-item-toggle-${item.id}`}
+                      onClick={() => store.updateShopItem(item.id, { active: !item.active })}
+                      className={cn(
+                        'rounded-lg px-2 py-1 text-[11px] font-semibold',
+                        item.active ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      )}
+                    >
+                      {item.active ? '판매 중' : '숨김'}
+                    </button>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex justify-end gap-1">
+                      <button
+                        data-testid={`admin-item-edit-${item.id}`}
+                        onClick={() => openEdit(item)}
+                        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                      >
+                        수정
+                      </button>
+                      <button
+                        data-testid={`admin-item-delete-${item.id}`}
+                        onClick={() => {
+                          store.deleteShopItem(item.id);
+                          toast(`${item.name} 상품을 삭제했어요`);
+                        }}
+                        className="rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600 hover:bg-rose-100"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">
+                    상품이 없어요. ’상품 추가’로 첫 상품을 만들어 주세요.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        <p className="p-4 pt-2 text-[11px] leading-relaxed text-slate-400">
+          상품을 삭제해도 지난 신청 내역은 신청 당시 이름·금액으로 남아요. 판매를 잠시 멈추려면 ’판매 중’을 눌러 숨김으로 바꾸세요.
+        </p>
+      </Card>
+
+      <Modal
+        open={!!itemModal}
+        onClose={() => setItemModal(null)}
+        title={itemModal?.mode === 'edit' ? '상품 수정' : '상품 추가'}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setItemModal(null)}>
+              취소
+            </Button>
+            <Button data-testid="admin-item-save" onClick={saveItem}>
+              저장
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-3">
+          <label>
+            <span className="text-xs font-semibold text-slate-500">상품명</span>
+            <input
+              data-testid="admin-item-name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="예) 츄파춥스"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-brand-400"
+            />
+          </label>
+          <div className="grid grid-cols-[1fr_100px] gap-3">
+            <label>
+              <span className="text-xs font-semibold text-slate-500">가격 (원)</span>
+              <input
+                data-testid="admin-item-price"
+                type="number"
+                min={1}
+                value={form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+                placeholder="300"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-brand-400"
+              />
+            </label>
+            <label>
+              <span className="text-xs font-semibold text-slate-500">아이콘</span>
+              <input
+                data-testid="admin-item-emoji"
+                value={form.emoji}
+                onChange={(e) => setForm({ ...form, emoji: e.target.value })}
+                maxLength={4}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-center text-lg outline-none focus:border-brand-400"
+              />
+            </label>
+          </div>
+          <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
+            학생은 하루 50원씩 모아서 교환해요. 츄파춥스(300원)는 약 6일, 3,000원 금액권은 약 60일치입니다.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

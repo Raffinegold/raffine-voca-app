@@ -4,7 +4,9 @@
 **웹 + PWA + Supabase 연동형**이며, Supabase 설정이 없으면 **LocalStorage 데모 모드**로 즉시 시연됩니다.
 
 - 학생: 이름 + 4자리 PIN → 오늘의 미션(오답 먼저 + 신규) → 카드 암기 → 4지선다 → 스펠링 → 결과 → 스트릭·랭킹
-- 원장님: 대시보드 · 학생/PIN 발급 · TOSEL 진단 기반 레벨 배정 · CSV 단어장 · 금요일 학부모 요약 복사
+- 학생 🃏 **단어 짝맞추기 게임**: 6쌍(12장)/8쌍(16장) 영단어↔한글 뜻 뒤집기, 콤보·효과음, 판당 보상, **하루 최대 50원** 캐시 적립(상한 후엔 연습 모드)
+- 학생 🎁 **기프티콘 상점**: 보유 캐시로 츄파춥스·바나나맛 우유·CU 금액권 등 교환 신청 → 캐시 즉시 차감 · 신청 대기 내역
+- 원장님: 대시보드 · 학생/PIN 발급 · TOSEL 진단 기반 레벨 배정 · CSV 단어장 · 금요일 학부모 요약 복사 · **상점·교환 관리(일일 상한 설정, 상품 CRUD, 발송 완료/취소 환불)**
 - 학부모: `/r/:token` 읽기 전용 주간 리포트
 
 ## 빠른 실행
@@ -44,17 +46,21 @@ rafine-voca-app/
 │  │  ├─ report.ts            # 학부모 요약 문구 · 링크 · 클립보드
 │  │  ├─ csv.ts               # CSV 파싱·검증(빈칸·중복·오타 의심)
 │  │  ├─ speech.ts            # Web Speech API 발음
+│  │  ├─ sound.ts             # 짝맞추기 효과음(WebAudio, 무음 토글)
 │  │  └─ util.ts              # 날짜·PIN 해시(데모)·문자열
 │  ├─ pages/
 │  │  ├─ LoginPage.tsx        # 학생 선택 + PIN / 원장님 모드 전환
 │  │  ├─ StudentHome.tsx      # 오늘의 미션·오답노트·랭킹
 │  │  ├─ StudyPage.tsx        # 카드 → 4지선다 → 스펠링 → 결과
-│  │  ├─ AdminPage.tsx        # 대시보드·학생·단어장·레벨 배정·금요일 리포트
+│  │  ├─ GamePage.tsx         # 🃏 짝맞추기(카드 뒤집기·콤보·캐시 적립)
+│  │  ├─ ShopPage.tsx         # 🎁 기프티콘 상점·교환 신청 내역
+│  │  ├─ AdminPage.tsx        # 대시보드·학생·단어장·레벨 배정·상점·교환·금요일 리포트
 │  │  └─ ParentReportPage.tsx # /r/:token 읽기 전용
-│  └─ components/             # UI 키트 · 학부모 리포트 카드
-├─ supabase/schema.sql        # 7개 테이블(+배정이력·세션) + RLS + 로그인/학습/관리자 RPC
+│  └─ components/             # UI 키트 · 학생 하단 탭 · 학부모 리포트 카드
+├─ supabase/schema.sql        # 테이블(학생·단어·로그·배정이력·세션·캐시지갑·상점·교환·게임) + RLS + RPC
 ├─ public/                    # 아이콘(PWA) · _redirects(SPA fallback) · favicon
-├─ qa/capture.mjs             # Playwright 자동 점검 + 스크린샷
+├─ qa/capture.mjs             # Playwright 자동 점검 + 스크린샷(학습 흐름)
+├─ qa/game-shop.mjs           # 게임·캐시 상한·상점 교환·관리자 승인 자동 점검
 └─ .env.example
 ```
 
@@ -73,10 +79,28 @@ QA_OUT=./qa-shots npm run qa     # 스크린샷 + 콘솔 오류 리포트
 
 학생 로그인 → 18문항 풀이 → 결과 → 오답노트·랭킹 → 학부모 리포트 → 관리자 로그인/학생 추가/CSV/레벨 배정/금요일 복사까지 자동으로 확인합니다.
 
+```bash
+QA_BASE=http://127.0.0.1:4173/raffine-voca-app node qa/game-shop.mjs
+```
+짝맞추기 4판(퍼펙트·오답 포함)으로 **하루 50원 상한**과 연습 모드를 확인하고, 상점 교환 신청 → 관리자 발송 완료/취소(환불) → 상품 추가·삭제 → 학생 화면 반영까지 점검합니다.
+
+## 짝맞추기 게임 · 캐시 · 상점 규칙 (2026-11-17 추가)
+
+| 항목 | 내용 |
+|---|---|
+| 게임 | 학생 레벨 단어에서 6쌍(4×3, 12장) 또는 8쌍(4×4, 16장)을 뽑아 **영단어 카드 ↔ 한글 뜻 카드**를 뒤집어 짝짓기 |
+| 판당 보상 | 기본 6쌍 10원 / 8쌍 15원 + 퍼펙트 5원 + 콤보 1~2원 + 스피드 3원 → **10~25원** |
+| 일일 상한 | 학생 1인 **하루 50원**(관리자 설정에서 변경). 남은 한도만 적립되고, 다 채우면 **연습 모드**(0원)로 계속 플레이 |
+| 오답 학습 | 틀렸던 단어는 결과 요약에서 **뜻과 함께** 다시 보여 줌 |
+| 상점 | 초기 상품: 츄파춥스 300원 · 바나나맛 우유 1,500원 · CU 모바일금액권 3,000원 · 배스킨라빈스 싱글레귤러 3,900원 |
+| 교환 | 보유 캐시가 충분할 때만 신청 버튼 활성화 → 신청 시 **즉시 차감** 후 ’신청 대기’ 기록 → 원장님 발송 완료 / 취소(환불) |
+| 관리자 | PIN 9999 로그인 → 「상점·교환」 탭에서 일일 상한, 상품 추가·수정·숨김·삭제, 교환 처리 |
+| 저장 | LocalStorage 데모 모드와 Supabase 모드 모두 같은 화면 코드. 실DB는 `cash_wallets`(cash_balance·daily_cash_earned) · `shop_items` · `redemption_requests` · `game_sessions` · `app_settings` 테이블과 `student_game_reward`/`student_redeem`/`admin_handle_redemption` RPC 사용 |
+
 ## Supabase 연결 (실시간 DB로 전환)
 
 1. [supabase.com](https://supabase.com) → New project (무료).
-2. **SQL Editor**에서 `supabase/schema.sql` 전문 실행. (테이블 7개 + `level_history` + `student_sessions` + RLS + RPC)
+2. **SQL Editor**에서 `supabase/schema.sql` 전문 실행. (학생·단어·로그·배정이력·세션 + `cash_wallets`·`shop_items`·`redemption_requests`·`game_sessions`·`app_settings` + RLS + RPC)
 3. **Project Settings → API**에서 URL / anon key 복사 → `.env` 작성:
    ```
    VITE_SUPABASE_URL=https://xxxx.supabase.co

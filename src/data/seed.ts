@@ -1,4 +1,4 @@
-import type { Student, Word, WordSet, Level } from '../types';
+import type { CashWallet, RedemptionRequest, ShopItem, Student, Word, WordSet, Level } from '../types';
 
 /**
  * 데모 시드 데이터
@@ -237,6 +237,67 @@ export const SEED_WORDS: Word[] = ([1, 2, 3, 4, 5] as Level[]).flatMap((level) =
 });
 
 export const SEED_ADMIN_PIN = '9999';
+
+/** 하루 캐시 적립 상한 기본값 (원) */
+export const DEFAULT_CASH_DAILY_LIMIT = 50;
+
+/** 기프티콘 상점 초기 데모 상품 */
+export const SEED_SHOP_ITEMS: ShopItem[] = [
+  { id: 'item-chupachups', name: '츄파춥스', price: 300, emoji: '🍭', active: true, sort_no: 1, created_at: '2026-11-10T09:00:00+09:00' },
+  { id: 'item-banana-milk', name: '바나나맛 우유', price: 1500, emoji: '🥛', active: true, sort_no: 2, created_at: '2026-11-10T09:00:00+09:00' },
+  { id: 'item-cu-3000', name: 'CU 모바일금액권 3,000원', price: 3000, emoji: '🎟️', active: true, sort_no: 3, created_at: '2026-11-10T09:00:00+09:00' },
+  { id: 'item-br-single', name: '배스킨라빈스 싱글레귤러', price: 3900, emoji: '🍦', active: true, sort_no: 4, created_at: '2026-11-10T09:00:00+09:00' },
+];
+
+/**
+ * 데모용 지갑 잔액 — 상점·교환 흐름을 바로 시연할 수 있게 넣어 둔 값입니다.
+ * (실제 학원 계정에서는 0원에서 시작하고, 짝맞추기 게임으로만 쌓입니다)
+ */
+export const SEED_WALLET_BALANCES: Record<string, number> = {
+  'stu-seoyeon': 1280,
+  'stu-junwoo': 3300, // 아래 데모 대기 신청(츄파춥스 300원)을 이미 차감한 잔액
+  'stu-haeun': 450,
+  'stu-minjun': 2150,
+  'stu-yujin': 120,
+};
+
+/** 데모용 교환 신청 내역 (관리자 화면의 발송 완료/취소 처리 시연) */
+export function seedRedemptions(today: string): RedemptionRequest[] {
+  return [
+    {
+      id: 'rdm-demo-1',
+      student_id: 'stu-junwoo',
+      item_id: 'item-chupachups',
+      item_name: '츄파춥스',
+      price: 300,
+      status: 'pending',
+      requested_at: `${today}T16:40:00+09:00`,
+      handled_at: null,
+    },
+    {
+      id: 'rdm-demo-2',
+      student_id: 'stu-seoyeon',
+      item_id: 'item-banana-milk',
+      item_name: '바나나맛 우유',
+      price: 1500,
+      status: 'sent',
+      requested_at: '2026-11-14T17:20:00+09:00',
+      handled_at: '2026-11-15T09:10:00+09:00',
+    },
+  ];
+}
+
+/** 학생별 지갑 초기값 */
+export function seedWallets(students: Student[], today: string): CashWallet[] {
+  return students.map((s) => ({
+    student_id: s.id,
+    cash_balance: SEED_WALLET_BALANCES[s.id] ?? 0,
+    daily_cash_earned: 0,
+    earned_date: today,
+    updated_at: `${today}T09:00:00+09:00`,
+  }));
+}
+
 
 /** 데모 로그인 안내용 PIN 표 (학생 id → 4자리) */
 export const SEED_DEMO_PINS: Record<string, string> = Object.fromEntries(

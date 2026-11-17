@@ -135,6 +135,74 @@ create table if not exists public.student_sessions (
 );
 create index if not exists student_sessions_expiry on public.student_sessions (expires_at);
 
+-- ---------------------------------------------------------------------------
+-- 10) 캐시 지갑 (학생 1명당 1행) — 보유 캐시(cash_balance)와 오늘 적립(daily_cash_earned)
+--     하루 적립 상한은 app_settings.cash_daily_limit (기본 50원) 로 관리합니다.
+-- ---------------------------------------------------------------------------
+create table if not exists public.cash_wallets (
+  student_id uuid primary key references public.students(id) on delete cascade,
+  cash_balance int not null default 0 check (cash_balance >= 0),
+  daily_cash_earned int not null default 0 check (daily_cash_earned >= 0),
+  earned_date date not null default (now() at time zone 'Asia/Seoul')::date,
+  updated_at timestamptz default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- 11) 기프티콘 상점 상품
+-- ---------------------------------------------------------------------------
+create table if not exists public.shop_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  price int not null check (price > 0),
+  emoji text default '🎁',
+  active boolean not null default true,
+  sort_no smallint not null default 0,
+  created_at timestamptz default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- 12) 기프티콘 교환 신청 (신청 시점에 캐시는 즉시 차감, 취소 시 환불)
+--     item_name·price 는 신청 당시 스냅샷 — 상품이 수정·삭제되어도 내역은 유지됩니다.
+-- ---------------------------------------------------------------------------
+create table if not exists public.redemption_requests (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references public.students(id) on delete cascade,
+  item_id uuid references public.shop_items(id) on delete set null,
+  item_name text not null,
+  price int not null check (price >= 0),
+  status text not null default 'pending' check (status in ('pending', 'sent', 'canceled')),
+  requested_at timestamptz default now(),
+  handled_at timestamptz
+);
+create index if not exists redemption_status_idx on public.redemption_requests (status, requested_at desc);
+
+-- ---------------------------------------------------------------------------
+-- 13) 짝짓기 게임 판 기록 (어떤 단어를 헷갈렸는지 포함)
+-- ---------------------------------------------------------------------------
+create table if not exists public.game_sessions (
+  id bigserial primary key,
+  student_id uuid references public.students(id) on delete cascade,
+  pairs smallint not null check (pairs in (6, 8)),
+  attempts smallint,
+  duration_ms int,
+  cash_earned int not null default 0,
+  wrong_word_ids jsonb not null default '[]'::jsonb,
+  played_at timestamptz default now()
+);
+create index if not exists game_sessions_student_idx on public.game_sessions (student_id, played_at desc);
+
+-- ---------------------------------------------------------------------------
+-- 14) 앱 설정 — 일일 캐시 상한 등 (key/value)
+-- ---------------------------------------------------------------------------
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null default '{}'::jsonb,
+  updated_at timestamptz default now()
+);
+insert into public.app_settings (key, value)
+values ('cash_daily_limit', '{"value": 50}'::jsonb)
+on conflict (key) do nothing;
+
 -- ============================================================================
 --  RLS (행 수준 보안)
 --  - anon: 개인정보 테이블 접근 불가. 단어장(word_sets, words)만 읽기 허용.
@@ -163,6 +231,11 @@ alter table public.wrong_notes enable row level security;
 alter table public.weekly_reports enable row level security;
 alter table public.level_history enable row level security;
 alter table public.student_sessions enable row level security;
+alter table public.cash_wallets enable row level security;
+alter table public.shop_items enable row level security;
+alter table public.redemption_requests enable row level security;
+alter table public.game_sessions enable row level security;
+alter table public.app_settings enable row level security;
 
 -- 원장님 전체 권한
 drop policy if exists admin_all_students on public.students;
@@ -188,6 +261,26 @@ create policy admin_all_reports on public.weekly_reports for all to authenticate
 
 drop policy if exists admin_all_history on public.level_history;
 create policy admin_all_history on public.level_history for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- 원장님: 상점·교환·캐시 전권
+drop policy if exists admin_all_wallets on public.cash_wallets;
+create policy admin_all_wallets on public.cash_wallets for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_shop_items on public.shop_items;
+create policy admin_all_shop_items on public.shop_items for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_redemptions on public.redemption_requests;
+create policy admin_all_redemptions on public.redemption_requests for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_game_sessions on public.game_sessions;
+create policy admin_all_game_sessions on public.game_sessions for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admin_all_settings on public.app_settings;
+create policy admin_all_settings on public.app_settings for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- 상품 목록은 개인정보가 없으니 읽기 공개 (숨김 상품은 제외)
+drop policy if exists public_read_shop_items on public.shop_items;
+create policy public_read_shop_items on public.shop_items for select to anon, authenticated using (active);
 
 -- 단어장은 학습 콘텐츠라 읽기 공개 (개인정보 없음)
 drop policy if exists public_read_sets on public.word_sets;
@@ -307,7 +400,21 @@ begin
              and l.answered_at > now() - interval '30 days'
            group by 1
         ) d
-    ), '[]'::jsonb)
+    ), '[]'::jsonb),
+    'wallet', (
+      select to_jsonb(w) from public.cash_wallets w where w.student_id = v_student.id
+    ),
+    'shop_items', coalesce((
+      select jsonb_agg(to_jsonb(i) order by i.sort_no)
+        from public.shop_items i
+       where i.active
+    ), '[]'::jsonb),
+    'redemptions', coalesce((
+      select jsonb_agg(to_jsonb(r) order by r.requested_at desc)
+        from public.redemption_requests r
+       where r.student_id = v_student.id
+    ), '[]'::jsonb),
+    'daily_cash_limit', public.cash_daily_limit()
   );
 end;
 $$;
@@ -378,6 +485,223 @@ begin
 end;
 $$;
 
+-- ============================================================================
+--  캐시 · 기프티콘 상점 RPC
+--  보상 금액과 일일 상한은 서버에서 계산합니다. 클라이언트가 보낸 금액을 믿지 않습니다.
+-- ============================================================================
+
+-- 오늘의 일일 적립 상한 (기본 50원)
+create or replace function public.cash_daily_limit()
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select nullif(value ->> 'value', '')::int from public.app_settings where key = 'cash_daily_limit'),
+    50
+  );
+$$;
+
+-- 지갑 보장 + 날짜가 바뀌었으면 오늘 적립을 0으로 되돌립니다
+create or replace function public.ensure_wallet(p_student_id uuid)
+returns public.cash_wallets
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_wallet public.cash_wallets%rowtype;
+  v_today date := (now() at time zone 'Asia/Seoul')::date;
+begin
+  insert into public.cash_wallets (student_id, earned_date)
+  values (p_student_id, v_today)
+  on conflict (student_id) do nothing;
+
+  update public.cash_wallets
+     set daily_cash_earned = 0, earned_date = v_today, updated_at = now()
+   where student_id = p_student_id
+     and earned_date <> v_today;
+
+  select * into v_wallet from public.cash_wallets where student_id = p_student_id;
+  return v_wallet;
+end;
+$$;
+
+-- 짝짓기 게임 1판 적립 — 서버 규칙으로 보상을 계산하고 하루 상한까지만 지급
+create or replace function public.student_game_reward(
+  p_token text,
+  p_pairs smallint,
+  p_attempts smallint,
+  p_max_combo smallint,
+  p_duration_ms int,
+  p_wrong_word_ids jsonb default '[]'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_session public.student_sessions%rowtype;
+  v_wallet public.cash_wallets%rowtype;
+  v_pairs smallint := case when p_pairs = 8 then 8 else 6 end;
+  v_attempts smallint := greatest(coalesce(p_attempts, 0), v_pairs);
+  v_limit int := public.cash_daily_limit();
+  v_base int := case when v_pairs = 8 then 15 else 10 end;
+  v_perfect int := case when v_attempts <= v_pairs then 5 else 0 end;
+  v_combo int := case
+                   when coalesce(p_max_combo, 0) >= v_pairs then 2
+                   when coalesce(p_max_combo, 0) >= 3 then 1
+                   else 0
+                 end;
+  v_speed int := case
+                   when coalesce(p_duration_ms, 0) > 0 and p_duration_ms <= v_pairs * 7000 then 3
+                   else 0
+                 end;
+  v_raw int;
+  v_pay int;
+begin
+  select * into v_session from public.student_sessions
+   where token = p_token and expires_at > now();
+  if not found then
+    raise exception 'SESSION_EXPIRED';
+  end if;
+
+  v_wallet := public.ensure_wallet(v_session.student_id);
+  v_raw := v_base + v_perfect + v_combo + v_speed;
+  v_pay := greatest(0, least(v_raw, v_limit - v_wallet.daily_cash_earned));
+
+  update public.cash_wallets
+     set cash_balance = cash_balance + v_pay,
+         daily_cash_earned = daily_cash_earned + v_pay,
+         updated_at = now()
+   where student_id = v_session.student_id
+   returning * into v_wallet;
+
+  insert into public.game_sessions(student_id, pairs, attempts, duration_ms, cash_earned, wrong_word_ids)
+  values (v_session.student_id, v_pairs, v_attempts, greatest(coalesce(p_duration_ms, 0), 0), v_pay,
+          coalesce(p_wrong_word_ids, '[]'::jsonb));
+
+  return jsonb_build_object(
+    'raw', v_raw,
+    'earned', v_pay,
+    'capped', v_pay < v_raw,
+    'limit', v_limit,
+    'wallet', to_jsonb(v_wallet)
+  );
+end;
+$$;
+
+-- 기프티콘 교환 신청 — 잔액 확인 후 즉시 차감, ’신청 대기’로 기록
+create or replace function public.student_redeem(p_token text, p_item_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_session public.student_sessions%rowtype;
+  v_item public.shop_items%rowtype;
+  v_wallet public.cash_wallets%rowtype;
+  v_request public.redemption_requests%rowtype;
+begin
+  select * into v_session from public.student_sessions
+   where token = p_token and expires_at > now();
+  if not found then
+    raise exception 'SESSION_EXPIRED';
+  end if;
+
+  select * into v_item from public.shop_items where id = p_item_id and active;
+  if not found then
+    raise exception 'ITEM_NOT_FOUND';
+  end if;
+
+  perform public.ensure_wallet(v_session.student_id);
+  select * into v_wallet from public.cash_wallets where student_id = v_session.student_id for update;
+  if v_wallet.cash_balance < v_item.price then
+    raise exception 'NOT_ENOUGH_CASH';
+  end if;
+
+  update public.cash_wallets
+     set cash_balance = cash_balance - v_item.price, updated_at = now()
+   where student_id = v_session.student_id
+   returning * into v_wallet;
+
+  insert into public.redemption_requests(student_id, item_id, item_name, price, status)
+  values (v_session.student_id, v_item.id, v_item.name, v_item.price, 'pending')
+  returning * into v_request;
+
+  return jsonb_build_object('request', to_jsonb(v_request), 'wallet', to_jsonb(v_wallet));
+end;
+$$;
+
+-- 원장님: 교환 처리 (sent = 발송 완료 / cancel = 취소 후 캐시 환불)
+create or replace function public.admin_handle_redemption(p_id uuid, p_action text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_request public.redemption_requests%rowtype;
+begin
+  if not public.is_admin() then
+    raise exception 'NOT_ADMIN';
+  end if;
+  if p_action not in ('sent', 'cancel') then
+    raise exception 'BAD_ACTION';
+  end if;
+
+  select * into v_request from public.redemption_requests where id = p_id for update;
+  if not found then
+    raise exception 'REQUEST_NOT_FOUND';
+  end if;
+  if v_request.status <> 'pending' then
+    return jsonb_build_object('ok', false, 'reason', 'ALREADY_HANDLED', 'status', v_request.status);
+  end if;
+
+  if p_action = 'cancel' then
+    perform public.ensure_wallet(v_request.student_id);
+    update public.cash_wallets
+       set cash_balance = cash_balance + v_request.price, updated_at = now()
+     where student_id = v_request.student_id;
+  end if;
+
+  update public.redemption_requests
+     set status = case when p_action = 'sent' then 'sent' else 'canceled' end,
+         handled_at = now()
+   where id = p_id
+   returning * into v_request;
+
+  return jsonb_build_object('ok', true, 'request', to_jsonb(v_request));
+end;
+$$;
+
+-- 원장님: 일일 캐시 적립 상한 변경
+create or replace function public.admin_set_cash_limit(p_limit int)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_limit int := greatest(0, least(100000, coalesce(p_limit, 50)));
+begin
+  if not public.is_admin() then
+    raise exception 'NOT_ADMIN';
+  end if;
+
+  insert into public.app_settings(key, value, updated_at)
+  values ('cash_daily_limit', jsonb_build_object('value', v_limit), now())
+  on conflict (key) do update
+    set value = excluded.value, updated_at = now();
+
+  return jsonb_build_object('ok', true, 'limit', v_limit);
+end;
+$$;
+
 -- 원장님: 학생 추가 (bcrypt PIN 발급) — 앱 관리자 화면에서 호출
 create or replace function public.admin_create_student(
   p_name text,
@@ -443,6 +767,8 @@ $$;
 
 grant execute on function public.admin_create_student(text, smallint, text, text, smallint, text) to authenticated;
 grant execute on function public.admin_reset_pin(uuid, text) to authenticated;
+grant execute on function public.admin_handle_redemption(uuid, text) to authenticated;
+grant execute on function public.admin_set_cash_limit(int) to authenticated;
 
 -- 오래된 세션 정리 (Cron 또는 수동 실행)
 create or replace function public.cleanup_sessions()
@@ -456,9 +782,15 @@ as $$ delete from public.student_sessions where expires_at < now(); $$;
 revoke all on function public.student_login(text, text) from public;
 revoke all on function public.student_bundle(text) from public;
 revoke all on function public.student_answer(text, uuid, boolean, text, int) from public;
+revoke all on function public.student_game_reward(text, smallint, smallint, smallint, int, jsonb) from public;
+revoke all on function public.student_redeem(text, uuid) from public;
+revoke all on function public.cash_daily_limit() from public;
 grant execute on function public.student_login(text, text) to anon, authenticated;
 grant execute on function public.student_bundle(text) to anon, authenticated;
 grant execute on function public.student_answer(text, uuid, boolean, text, int) to anon, authenticated;
+grant execute on function public.student_game_reward(text, smallint, smallint, smallint, int, jsonb) to anon, authenticated;
+grant execute on function public.student_redeem(text, uuid) to anon, authenticated;
+grant execute on function public.cash_daily_limit() to anon, authenticated;
 
 -- ============================================================================
 --  시드 예시 — 5명 학생 + Level 1 샘플 세트 1개
@@ -475,6 +807,13 @@ grant execute on function public.student_answer(text, uuid, boolean, text, int) 
 --   from public.word_sets where level = 3 and day_index = 1;
 -- insert into public.assignments (student_id, set_id)
 -- select s.id, ws.id from public.students s join public.word_sets ws on ws.level = s.level;
+
+-- 기프티콘 상점 초기 상품 (앱의 데모 시드와 동일)
+-- insert into public.shop_items (name, price, emoji, sort_no) values
+--   ('츄파춥스', 300, '🍭', 1),
+--   ('바나나맛 우유', 1500, '🥛', 2),
+--   ('CU 모바일금액권 3,000원', 3000, '🎟️', 3),
+--   ('배스킨라빈스 싱글레귤러', 3900, '🍦', 4);
 
 -- ============================================================================
 --  원장님 계정 만들기 (Supabase Auth)

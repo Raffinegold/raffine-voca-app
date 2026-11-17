@@ -5,6 +5,8 @@ import { ToastProvider } from './components/ui';
 import LoginPage from './pages/LoginPage';
 import StudentHome from './pages/StudentHome';
 import StudyPage from './pages/StudyPage';
+import GamePage from './pages/GamePage';
+import ShopPage from './pages/ShopPage';
 import AdminPage from './pages/AdminPage';
 import ParentReportPage from './pages/ParentReportPage';
 import { store } from './lib/store';
@@ -67,6 +69,22 @@ export default function App() {
               element={
                 <StudentRoute>
                   <StudyPage />
+                </StudentRoute>
+              }
+            />
+            <Route
+              path="/game"
+              element={
+                <StudentRoute>
+                  <GamePage />
+                </StudentRoute>
+              }
+            />
+            <Route
+              path="/shop"
+              element={
+                <StudentRoute>
+                  <ShopPage />
                 </StudentRoute>
               }
             />

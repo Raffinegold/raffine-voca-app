@@ -1,20 +1,25 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSession, useTodayDone, useVocaStore } from '../app-context';
 import { Badge, Bar, Button, Card, LevelPill, ProgressRing, SectionTitle } from '../components/ui';
+import StudentNav from '../components/StudentNav';
 import { buildMission, buildReviewOnly } from '../lib/mission';
 import { computeStreak, computeWeekStats, weeklyRanking } from '../lib/stats';
 import { LEVEL_META } from '../types';
 import { cn, formatKoShort, pct, todayStr } from '../lib/util';
 
 type Tab = 'today' | 'wrong' | 'rank';
+const TABS: Tab[] = ['today', 'wrong', 'rank'];
 
 export default function StudentHome() {
   const store = useVocaStore();
   const navigate = useNavigate();
   const { student, logout } = useSession();
   const done = useTodayDone(student);
-  const [tab, setTab] = useState<Tab>('today');
+  const [params, setParams] = useSearchParams();
+  const paramTab = params.get('tab');
+  const tab: Tab = TABS.includes(paramTab as Tab) ? (paramTab as Tab) : 'today';
+  const setTab = (next: Tab) => setParams(next === 'today' ? {} : { tab: next }, { replace: true });
 
   if (!student) return null;
 
@@ -52,6 +57,13 @@ export default function StudentHome() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => navigate('/shop')}
+              data-testid="home-cash"
+              className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700 hover:bg-amber-200"
+            >
+              💰 {store.cashBalance(student.id).toLocaleString()}원
+            </button>
             <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">🔥 {streak}일</span>
             <button
               onClick={logout}
@@ -285,37 +297,7 @@ export default function StudentHome() {
         ) : null}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-white bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-stretch justify-around px-2 pb-safe pt-1.5">
-          {(
-            [
-              ['today', '오늘', '📅'],
-              ['wrong', '오답노트', '🔁'],
-              ['rank', '랭킹', '🏆'],
-            ] as const
-          ).map(([key, label, icon]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={cn(
-                'flex flex-1 flex-col items-center gap-0.5 rounded-2xl py-2 text-[11px] font-semibold transition',
-                tab === key ? 'text-brand-700' : 'text-slate-400'
-              )}
-            >
-              <span className={cn('text-lg transition', tab === key && 'scale-110')}>{icon}</span>
-              {label}
-            </button>
-          ))}
-          <button
-            onClick={logout}
-            data-testid="next-student"
-            className="flex flex-1 flex-col items-center gap-0.5 rounded-2xl py-2 text-[11px] font-semibold text-slate-400"
-          >
-            <span className="text-lg">👋</span>
-            다음 학생
-          </button>
-        </div>
-      </nav>
+      <StudentNav active={tab} />
     </div>
   );
 }

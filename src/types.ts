@@ -119,6 +119,64 @@ export const LEVEL_TO_TOSEL: Record<Level, ToselLevel> = {
   5: 'High Junior',
 };
 
+/* ------------------------------ 캐시 / 상점 / 게임 ------------------------------ */
+
+/** 학생 캐시 지갑 — 하루 적립 상한(daily_cash_earned)과 잔액(cash_balance)을 함께 보관 */
+export interface CashWallet {
+  student_id: string;
+  /** 보유 캐시(원) */
+  cash_balance: number;
+  /** earned_date 하루 동안 적립한 금액 */
+  daily_cash_earned: number;
+  /** daily_cash_earned 의 기준일 (YYYY-MM-DD) */
+  earned_date: string;
+  updated_at: string;
+}
+
+/** 짝맞추기 게임 1판 기록 */
+export interface GameSession {
+  id: string;
+  student_id: string;
+  /** 6 또는 8 (쌍 수) */
+  pairs: number;
+  attempts: number;
+  duration_ms: number;
+  cash_earned: number;
+  wrong_word_ids: string[];
+  played_at: string;
+}
+
+export interface ShopItem {
+  id: string;
+  name: string;
+  price: number;
+  emoji: string;
+  active: boolean;
+  sort_no: number;
+  created_at: string;
+}
+
+export type RedemptionStatus = 'pending' | 'sent' | 'canceled';
+
+/** 기프티콘 교환 신청 */
+export interface RedemptionRequest {
+  id: string;
+  student_id: string;
+  item_id: string;
+  /** 신청 당시 상품명·가격 스냅샷 (상품이 삭제·수정되어도 내역은 유지) */
+  item_name: string;
+  price: number;
+  status: RedemptionStatus;
+  requested_at: string;
+  handled_at: string | null;
+}
+
+/** 앱 전역 설정 (관리자 화면에서 수정) */
+export interface AppSettings {
+  /** 학생 1인 하루 캐시 적립 상한 (기본 50원) */
+  cash_daily_limit: number;
+}
+
 export interface Session {
   role: 'student' | 'admin';
   studentId?: string;

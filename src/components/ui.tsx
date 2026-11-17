@@ -57,8 +57,16 @@ export function Badge({
   );
 }
 
-export function Card({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('rounded-3xl bg-white/90 shadow-soft border border-white p-5', className)}>{children}</div>;
+export function Card({
+  children,
+  className,
+  ...rest
+}: { children: ReactNode; className?: string } & React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={cn('rounded-3xl bg-white/90 shadow-soft border border-white p-5', className)} {...rest}>
+      {children}
+    </div>
+  );
 }
 
 export function SectionTitle({ children, sub }: { children: ReactNode; sub?: ReactNode }) {

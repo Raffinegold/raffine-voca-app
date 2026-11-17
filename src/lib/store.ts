@@ -1,9 +1,14 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
+  AppSettings,
   Assignment,
+  CashWallet,
   DailyProgress,
+  GameSession,
   Level,
   LevelHistory,
+  RedemptionRequest,
+  ShopItem,
   Student,
   StudyLog,
   StudyMode,
@@ -13,7 +18,16 @@ import type {
   WrongNote,
 } from '../types';
 import { LEVEL_META, LEVEL_TO_TOSEL } from '../types';
-import { SEED_ADMIN_PIN, SEED_STUDENTS, SEED_WORD_SETS, SEED_WORDS } from '../data/seed';
+import {
+  DEFAULT_CASH_DAILY_LIMIT,
+  SEED_ADMIN_PIN,
+  SEED_SHOP_ITEMS,
+  SEED_STUDENTS,
+  SEED_WORD_SETS,
+  SEED_WORDS,
+  seedRedemptions,
+  seedWallets,
+} from '../data/seed';
 import { addDays, hashPin, mulberry32, randomPin, randomToken, todayStr, uid, verifyPin } from './util';
 
 const LS_KEY = 'rafine-voca-db-v1';
@@ -28,6 +42,11 @@ interface DB {
   progress: DailyProgress[];
   reports: WeeklyReport[];
   history: LevelHistory[];
+  wallets: CashWallet[];
+  shop_items: ShopItem[];
+  redemptions: RedemptionRequest[];
+  games: GameSession[];
+  settings: AppSettings;
 }
 
 const emptyDB = (): DB => ({
@@ -40,6 +59,11 @@ const emptyDB = (): DB => ({
   progress: [],
   reports: [],
   history: [],
+  wallets: [],
+  shop_items: [],
+  redemptions: [],
+  games: [],
+  settings: { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT },
 });
 
 export type StoreMode = 'local' | 'supabase';
@@ -79,6 +103,11 @@ class VocaStore {
   progress: DailyProgress[] = [];
   reports: WeeklyReport[] = [];
   history: LevelHistory[] = [];
+  wallets: CashWallet[] = [];
+  shopItems: ShopItem[] = [];
+  redemptions: RedemptionRequest[] = [];
+  games: GameSession[] = [];
+  settings: AppSettings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
   ready: Promise<void>;
   adminEmail: string | null = null;
   studentToken: string | null = null;
@@ -119,7 +148,35 @@ class VocaStore {
     if (this.students.length === 0) {
       this.seedLocal();
     }
+    this.normalizeExtras();
     this.emit();
+  }
+
+  /** 예전 저장본(상점·지갑 이전 버전)도 바로 동작하도록 빠진 부분만 채웁니다 */
+  private normalizeExtras() {
+    const today = todayStr();
+    if (!this.settings || typeof this.settings.cash_daily_limit !== 'number') {
+      this.settings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
+    }
+    if (!this.shopItems.length) {
+      this.shopItems = SEED_SHOP_ITEMS.map((i) => ({ ...i }));
+    }
+    if (!this.redemptions.length) {
+      this.redemptions = seedRedemptions(today);
+    }
+    const missing = this.students.filter((s) => !this.wallets.some((w) => w.student_id === s.id));
+    if (missing.length) {
+      this.wallets = [
+        ...this.wallets,
+        ...missing.map((s) => ({
+          student_id: s.id,
+          cash_balance: 0,
+          daily_cash_earned: 0,
+          earned_date: today,
+          updated_at: new Date().toISOString(),
+        })),
+      ];
+    }
   }
 
   private loadLocal() {
@@ -136,6 +193,11 @@ class VocaStore {
       this.progress = db.progress ?? [];
       this.reports = db.reports ?? [];
       this.history = db.history ?? [];
+      this.wallets = db.wallets ?? [];
+      this.shopItems = db.shop_items ?? [];
+      this.redemptions = db.redemptions ?? [];
+      this.games = db.games ?? [];
+      this.settings = db.settings ?? { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     } catch (err) {
       console.warn('[voca] 로컬 저장소 읽기 실패, 새로 시작합니다', err);
     }
@@ -155,6 +217,11 @@ class VocaStore {
         progress: this.progress,
         reports: this.reports,
         history: this.history,
+        wallets: this.wallets,
+        shop_items: this.shopItems,
+        redemptions: this.redemptions,
+        games: this.games,
+        settings: this.settings,
       };
       try {
         localStorage.setItem(LS_KEY, JSON.stringify(db));
@@ -285,6 +352,11 @@ class VocaStore {
       tosel_level: s.tosel_level,
       changed_at: s.created_at,
     }));
+    this.wallets = seedWallets(students, today);
+    this.shopItems = SEED_SHOP_ITEMS.map((i) => ({ ...i }));
+    this.redemptions = seedRedemptions(today);
+    this.games = [];
+    this.settings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     this.persistLocal();
   }
 
@@ -380,6 +452,19 @@ class VocaStore {
       target: Math.max(LEVEL_META[student.level].dailyNew, p.answered ?? 0),
       answered: p.answered ?? 0,
     }));
+    // 캐시 지갑·상점·교환 내역 (student_bundle 이 함께 내려줍니다)
+    if (bundle.wallet) {
+      this.wallets = [{ ...(bundle.wallet as CashWallet), student_id: student.id }];
+    }
+    if (Array.isArray(bundle.shop_items)) {
+      this.shopItems = bundle.shop_items as ShopItem[];
+    }
+    if (Array.isArray(bundle.redemptions)) {
+      this.redemptions = bundle.redemptions as RedemptionRequest[];
+    }
+    if (typeof bundle.daily_cash_limit === 'number') {
+      this.settings = { cash_daily_limit: bundle.daily_cash_limit };
+    }
     this.emit();
   }
 
@@ -852,6 +937,302 @@ class VocaStore {
     return this.students.find((s) => s.parent_token === token);
   }
 
+  /* ----------------------------- 캐시 예산 · 지갑 ----------------------------- */
+
+  /** 학생 1인 하루 적립 상한(원) */
+  cashDailyLimit(): number {
+    const v = this.settings?.cash_daily_limit;
+    return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_CASH_DAILY_LIMIT;
+  }
+
+  setCashDailyLimit(limit: number) {
+    const safe = Math.max(0, Math.min(100000, Math.round(limit || 0)));
+    this.settings = { ...this.settings, cash_daily_limit: safe };
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud('app_settings cash_daily_limit', () =>
+        this.client!
+          .from('app_settings')
+          .upsert({ key: 'cash_daily_limit', value: { value: safe } }, { onConflict: 'key' })
+      );
+    }
+    this.commit();
+  }
+
+  /** 지갑을 보장하고, 날짜가 바뀌었으면 오늘 적립을 0으로 되돌립니다 */
+  walletOf(studentId: string): CashWallet {
+    const today = todayStr();
+    const found = this.wallets.find((w) => w.student_id === studentId);
+    if (!found) {
+      const created: CashWallet = {
+        student_id: studentId,
+        cash_balance: 0,
+        daily_cash_earned: 0,
+        earned_date: today,
+        updated_at: new Date().toISOString(),
+      };
+      this.wallets = [...this.wallets, created];
+      return created;
+    }
+    if (found.earned_date !== today) {
+      const rolled: CashWallet = { ...found, daily_cash_earned: 0, earned_date: today };
+      this.replaceWallet(rolled);
+      return rolled;
+    }
+    return found;
+  }
+
+  private replaceWallet(next: CashWallet) {
+    this.wallets = this.wallets.map((w) => (w.student_id === next.student_id ? next : w));
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`wallet ${next.student_id}`, () =>
+        this.client!
+          .from('cash_wallets')
+          .upsert(
+            {
+              student_id: next.student_id,
+              cash_balance: next.cash_balance,
+              daily_cash_earned: next.daily_cash_earned,
+              earned_date: next.earned_date,
+            },
+            { onConflict: 'student_id' }
+          )
+      );
+    }
+  }
+
+  cashBalance(studentId: string): number {
+    return this.walletOf(studentId).cash_balance;
+  }
+
+  todayCashEarned(studentId: string): number {
+    return this.walletOf(studentId).daily_cash_earned;
+  }
+
+  /** 오늘 더 모을 수 있는 금액 */
+  remainingDailyCash(studentId: string): number {
+    return Math.max(0, this.cashDailyLimit() - this.todayCashEarned(studentId));
+  }
+
+  /** 게임 보상 지급 — 하루 상한을 넘지 않도록 잘라서 실제 지급액을 돌려줍니다 */
+  grantCash(studentId: string, amount: number): number {
+    const wallet = this.walletOf(studentId);
+    const pay = Math.max(0, Math.min(Math.round(amount), this.cashDailyLimit() - wallet.daily_cash_earned));
+    if (pay <= 0) return 0;
+    this.replaceWallet({
+      ...wallet,
+      cash_balance: wallet.cash_balance + pay,
+      daily_cash_earned: wallet.daily_cash_earned + pay,
+      updated_at: new Date().toISOString(),
+    });
+    this.commit();
+    return pay;
+  }
+
+  /** 잔액이 모자라면 false (교환 신청용 차감) */
+  private deductCash(studentId: string, amount: number): boolean {
+    const wallet = this.walletOf(studentId);
+    if (wallet.cash_balance < amount) return false;
+    this.replaceWallet({
+      ...wallet,
+      cash_balance: wallet.cash_balance - amount,
+      updated_at: new Date().toISOString(),
+    });
+    return true;
+  }
+
+  /** 관리자 화면 — 학생별 잔액·오늘 적립 현황 */
+  cashOverview(): { student: Student; balance: number; earnedToday: number }[] {
+    return this.listStudents(true).map((student) => ({
+      student,
+      balance: this.cashBalance(student.id),
+      earnedToday: this.todayCashEarned(student.id),
+    }));
+  }
+
+  /* -------------------------------- 짝짓기 게임 -------------------------------- */
+
+  recordGameSession(
+    studentId: string,
+    input: { pairs: number; attempts: number; durationMs: number; cashEarned: number; wrongWordIds: string[] }
+  ): GameSession {
+    const session: GameSession = {
+      id: uid('gs'),
+      student_id: studentId,
+      pairs: input.pairs,
+      attempts: input.attempts,
+      duration_ms: Math.max(0, Math.round(input.durationMs)),
+      cash_earned: input.cashEarned,
+      wrong_word_ids: input.wrongWordIds,
+      played_at: new Date().toISOString(),
+    };
+    this.games = [session, ...this.games].slice(0, 500);
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`game ${studentId}`, () =>
+        this.client!.from('game_sessions').insert({
+          student_id: studentId,
+          pairs: session.pairs,
+          attempts: session.attempts,
+          duration_ms: session.duration_ms,
+          cash_earned: session.cash_earned,
+          wrong_word_ids: session.wrong_word_ids,
+        })
+      );
+    }
+    this.commit();
+    return session;
+  }
+
+  gameSessionsFor(studentId: string, limit = 10): GameSession[] {
+    return this.games.filter((g) => g.student_id === studentId).slice(0, limit);
+  }
+
+  /* --------------------------------- 기프티콘 상점 --------------------------------- */
+
+  listShopItems(includeInactive = false): ShopItem[] {
+    return this.shopItems
+      .filter((i) => includeInactive || i.active)
+      .slice()
+      .sort((a, b) => a.sort_no - b.sort_no || a.price - b.price || a.name.localeCompare(b.name, 'ko'));
+  }
+
+  addShopItem(input: { name: string; price: number; emoji?: string }): ShopItem {
+    const name = input.name.trim();
+    if (!name) throw new Error('상품명을 입력해 주세요');
+    const price = Math.max(0, Math.round(input.price || 0));
+    if (price <= 0) throw new Error('가격은 1원 이상이어야 해요');
+    const item: ShopItem = {
+      id: uid('item'),
+      name,
+      price,
+      emoji: (input.emoji ?? '').trim() || '🎁',
+      active: true,
+      sort_no: Math.max(0, ...this.shopItems.map((i) => i.sort_no)) + 1,
+      created_at: new Date().toISOString(),
+    };
+    this.shopItems = [...this.shopItems, item];
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`shop item add ${item.id}`, () =>
+        this.client!.from('shop_items').insert({
+          name: item.name,
+          price: item.price,
+          emoji: item.emoji,
+          active: item.active,
+          sort_no: item.sort_no,
+        })
+      );
+    }
+    this.commit();
+    return item;
+  }
+
+  updateShopItem(id: string, patch: Partial<Pick<ShopItem, 'name' | 'price' | 'emoji' | 'active'>>) {
+    const item = this.shopItems.find((i) => i.id === id);
+    if (!item) return;
+    const name = patch.name !== undefined ? patch.name.trim() || item.name : item.name;
+    const price = patch.price !== undefined ? Math.max(0, Math.round(patch.price)) : item.price;
+    const next: ShopItem = {
+      ...item,
+      name,
+      price,
+      emoji: patch.emoji !== undefined ? patch.emoji.trim() || item.emoji : item.emoji,
+      active: patch.active !== undefined ? patch.active : item.active,
+    };
+    this.shopItems = this.shopItems.map((i) => (i.id === id ? next : i));
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`shop item update ${id}`, () =>
+        this.client!
+          .from('shop_items')
+          .update({ name: next.name, price: next.price, emoji: next.emoji, active: next.active, sort_no: next.sort_no })
+          .eq('id', id)
+      );
+    }
+    this.commit();
+  }
+
+  /** 상품 삭제 — 이미 신청된 내역은 당시 이름·금액 스냅샷으로 그대로 남습니다 */
+  deleteShopItem(id: string) {
+    this.shopItems = this.shopItems.filter((i) => i.id !== id);
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`shop item delete ${id}`, () => this.client!.from('shop_items').delete().eq('id', id));
+    }
+    this.commit();
+  }
+
+  listRedemptions(studentId?: string): RedemptionRequest[] {
+    return this.redemptions
+      .filter((r) => !studentId || r.student_id === studentId)
+      .slice()
+      .sort((a, b) => b.requested_at.localeCompare(a.requested_at));
+  }
+
+  pendingRedemptions(): RedemptionRequest[] {
+    return this.listRedemptions().filter((r) => r.status === 'pending');
+  }
+
+  /** 교환 신청: 캐시를 즉시 차감하고 ’신청 대기’로 기록합니다 */
+  requestRedemption(studentId: string, itemId: string): RedemptionRequest {
+    const item = this.shopItems.find((i) => i.id === itemId && i.active);
+    if (!item) throw new Error('상품을 찾을 수 없어요');
+    if (!this.deductCash(studentId, item.price)) throw new Error('캐시가 부족해요');
+    const req: RedemptionRequest = {
+      id: uid('rdm'),
+      student_id: studentId,
+      item_id: item.id,
+      item_name: item.name,
+      price: item.price,
+      status: 'pending',
+      requested_at: new Date().toISOString(),
+      handled_at: null,
+    };
+    this.redemptions = [req, ...this.redemptions];
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`redemption ${req.id}`, () =>
+        this.client!.from('redemption_requests').insert({
+          student_id: studentId,
+          item_id: item.id,
+          item_name: item.name,
+          price: item.price,
+          status: 'pending',
+        })
+      );
+    }
+    this.commit();
+    return req;
+  }
+
+  markRedemptionSent(id: string) {
+    const req = this.redemptions.find((r) => r.id === id);
+    if (!req || req.status !== 'pending') return;
+    const next: RedemptionRequest = { ...req, status: 'sent', handled_at: new Date().toISOString() };
+    this.redemptions = this.redemptions.map((r) => (r.id === id ? next : r));
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`redemption sent ${id}`, () =>
+        this.client!.from('redemption_requests').update({ status: 'sent', handled_at: next.handled_at }).eq('id', id)
+      );
+    }
+    this.commit();
+  }
+
+  /** 취소 + 캐시 환불 (이미 발송한 건은 되돌리지 않습니다) */
+  cancelRedemption(id: string) {
+    const req = this.redemptions.find((r) => r.id === id);
+    if (!req || req.status !== 'pending') return;
+    const wallet = this.walletOf(req.student_id);
+    this.replaceWallet({
+      ...wallet,
+      cash_balance: wallet.cash_balance + req.price,
+      updated_at: new Date().toISOString(),
+    });
+    const next: RedemptionRequest = { ...req, status: 'canceled', handled_at: new Date().toISOString() };
+    this.redemptions = this.redemptions.map((r) => (r.id === id ? next : r));
+    if (this.mode === 'supabase' && this.client) {
+      this.cloud(`redemption cancel ${id}`, () =>
+        this.client!.from('redemption_requests').update({ status: 'canceled', handled_at: next.handled_at }).eq('id', id)
+      );
+    }
+    this.commit();
+  }
+
   /* ------------------------------- 관리자 인증 ------------------------------- */
 
   verifyAdminPin(pin: string): boolean {
@@ -924,6 +1305,25 @@ class VocaStore {
     this.wrongNotes = (notes.data ?? []) as any;
     this.reports = (reports.data ?? []) as any;
     this.history = (hist.data ?? []) as any;
+
+    // 캐시·상점 테이블은 스키마 적용 전 환경에서도 앱이 떨어지지 않도록 따로 읽습니다.
+    const extras = await Promise.all([
+      c.from('cash_wallets').select('*'),
+      c.from('shop_items').select('*'),
+      c.from('redemption_requests').select('*'),
+      c.from('game_sessions').select('*').order('played_at', { ascending: false }).limit(300),
+      c.from('app_settings').select('*'),
+    ]);
+    const [wallets, items, reds, games, settings] = extras;
+    if (!wallets.error && wallets.data) this.wallets = wallets.data as any;
+    if (!items.error && items.data) this.shopItems = items.data as any;
+    if (!reds.error && reds.data) this.redemptions = reds.data as any;
+    if (!games.error && games.data) this.games = games.data as any;
+    if (!settings.error && settings.data) {
+      const row = (settings.data as any[]).find((r) => r.key === 'cash_daily_limit');
+      const limit = row?.value?.value ?? row?.value;
+      if (typeof limit === 'number') this.settings = { cash_daily_limit: limit };
+    }
   }
 
   private watchCloud() {
@@ -972,6 +1372,11 @@ class VocaStore {
     this.progress = [];
     this.reports = [];
     this.history = [];
+    this.wallets = [];
+    this.shopItems = [];
+    this.redemptions = [];
+    this.games = [];
+    this.settings = { cash_daily_limit: DEFAULT_CASH_DAILY_LIMIT };
     this.seedLocal();
     this.emit();
   }
