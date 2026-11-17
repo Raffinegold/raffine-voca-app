@@ -176,81 +176,13 @@ try {
   log(`코딩 오답노트 항목 ${wrongItems}개 · 해설 표시: ${wrongExplain.includes('해설')}`);
   await shot(page, 'qa_coding_wrongnote.png');
 
-  /* ------------------------------ 4. 코딩 게임 ------------------------------ */
+  /* ------------------------------ 4. 코딩 게임 메뉴 ------------------------------ */
+  /* 게임 10종 상세 플레이 검증은 qa/games10.mjs 가 담당합니다. 여기서는 메뉴 진입과 5종 구성을 확인합니다. */
   await page.getByTestId('nav-game').click();
-  await page.getByTestId('coding-pick-bug').waitFor();
-  log('코딩 게임 선택 화면 진입');
-  await page.getByTestId('coding-pick-bug').click();
-  await page.getByTestId('coding-game-progress').waitFor();
-
-  let bugShot = false;
-  for (let q = 0; q < 6; q += 1) {
-    if (await page.getByTestId('coding-game-summary').count()) break;
-    const lines = page.locator('[data-testid^="coding-bug-line-"]');
-    if (!(await lines.count())) break;
-    const bugIdx = await lines.evaluateAll((els) => els.findIndex((el) => el.dataset.correct === '1'));
-    const pick = q === 1 ? (bugIdx === 0 ? 1 : 0) : bugIdx; // 두 번째 문제는 일부러 오답
-    await lines.nth(pick).click();
-    await page.getByTestId('coding-game-feedback').waitFor();
-    if (!bugShot) {
-      await page.waitForTimeout(400); // 색 전환 애니메이션이 끝난 뒤 캡처
-      await shot(page, 'qa_coding_game.png');
-      bugShot = true;
-    }
-    await page.getByTestId('coding-game-next').click();
-    await page.waitForTimeout(300);
-  }
-
-  await page.getByTestId('coding-game-summary').waitFor();
-  const bugScore = await page.getByTestId('coding-game-score').innerText();
-  const bugReward = await page.getByTestId('coding-game-reward').innerText();
-  const earnedAfterBug = await page.getByTestId('coding-daily-earned').innerText();
-  log(`🐛 버그 찾기 결과: ${bugScore.replace(/\n/g, ' ')} · 적립 ${bugReward} · 오늘 적립 ${earnedAfterBug.replace(/\n/g, ' ')}`);
-
-  /* 블록 순서 맞추기 */
-  await page.getByTestId('coding-game-other').click();
-  await page.getByTestId('coding-pick-order').click();
-  await page.getByTestId('coding-game-progress').waitFor();
-  for (let q = 0; q < 6; q += 1) {
-    if (await page.getByTestId('coding-game-summary').count()) break;
-    const blocks = page.locator('[data-testid^="coding-block-"]');
-    if (!(await blocks.count())) break;
-    const order = await blocks.evaluateAll((els) =>
-      els.map((el, i) => ({ i, order: Number(el.dataset.order) })).sort((a, b) => a.order - b.order)
-    );
-    for (const b of order) {
-      await page.locator('[data-testid^="coding-block-"]').nth(b.i).click();
-      await page.waitForTimeout(90);
-    }
-    await page.getByTestId('coding-game-feedback').waitFor();
-    if (q === 0) await shot(page, 'qa_coding_order.png');
-    await page.getByTestId('coding-game-next').click();
-    await page.waitForTimeout(300);
-  }
-  await page.getByTestId('coding-game-summary').waitFor();
-  const orderScore = await page.getByTestId('coding-game-score').innerText();
-  const orderReward = await page.getByTestId('coding-game-reward').innerText();
-  log(`🧩 블록 순서 결과: ${orderScore.replace(/\n/g, ' ')} · 적립 ${orderReward}`);
-
-  /* 출력 스피드 퀴즈 */
-  await page.getByTestId('coding-game-other').click();
-  await page.getByTestId('coding-pick-speed').click();
-  await page.getByTestId('coding-game-progress').waitFor();
-  for (let q = 0; q < 10; q += 1) {
-    if (await page.getByTestId('coding-game-summary').count()) break;
-    const opts = page.locator('[data-testid^="coding-speed-option-"]');
-    if (await opts.count()) {
-      const idx = await opts.evaluateAll((els) => els.findIndex((el) => el.dataset.correct === '1'));
-      const disabled = await opts.nth(idx).isDisabled().catch(() => true);
-      if (!disabled) await opts.nth(idx).click();
-    }
-    await page.waitForTimeout(1500);
-  }
-  await page.getByTestId('coding-game-summary').waitFor();
-  const speedScore = await page.getByTestId('coding-game-score').innerText();
-  const speedReward = await page.getByTestId('coding-game-reward').innerText();
-  log(`⚡ 스피드 결과: ${speedScore.replace(/\n/g, ' ')} · 적립 ${speedReward}`);
-  await shot(page, 'qa_coding_game_speed.png');
+  await page.getByTestId('coding-game-menu').waitFor();
+  const gameCards = await page.locator('[data-testid^="coding-pick-"]').count();
+  log(`코딩 게임 메뉴 진입 · 5종 카드 ${gameCards}개`);
+  await shot(page, 'qa_coding_game_menu.png');
 
   /* --------------------- 5. 공용 지갑 · 하루 50원 상한 연동 --------------------- */
   await page.evaluate(() => {
@@ -261,29 +193,24 @@ try {
     w.earned_date = today;
     localStorage.setItem('rafine-voca-db-v1', JSON.stringify(raw));
   });
-  await page.reload({ waitUntil: 'load' });
-  await page.getByTestId('coding-home').waitFor().catch(() => {});
-  await page.goto(`${BASE.replace(/\/$/, '')}/game`, { waitUntil: 'load' });
-  await page.getByTestId('coding-pick-bug').waitFor();
+  await page.goto(`${BASE.replace(/\/$/, '')}/game?g=debug`, { waitUntil: 'load' });
+  await page.getByTestId('cod-debug-arena').waitFor();
   log('영어에서 47원 적립한 상태를 재현 (localStorage 지갑) → 남은 상한 3원');
 
-  await page.getByTestId('coding-pick-bug').click();
-  for (let q = 0; q < 6; q += 1) {
+  for (let q = 0; q < 8; q += 1) {
     if (await page.getByTestId('coding-game-summary').count()) break;
-    const lines = page.locator('[data-testid^="coding-bug-line-"]');
+    const lines = page.locator('[data-testid^="cod-debug-line-"]');
     if (!(await lines.count())) break;
     const bugIdx = await lines.evaluateAll((els) => els.findIndex((el) => el.dataset.correct === '1'));
-    await lines.nth(bugIdx).click();
-    await page.getByTestId('coding-game-feedback').waitFor();
-    await page.getByTestId('coding-game-next').click();
-    await page.waitForTimeout(250);
+    if (bugIdx >= 0 && !(await lines.nth(bugIdx).isDisabled().catch(() => true))) await lines.nth(bugIdx).click();
+    await page.waitForTimeout(1300);
   }
   await page.getByTestId('coding-game-summary').waitFor();
   const cappedReward = await page.getByTestId('coding-game-reward').innerText();
   const cappedBody = await page.getByTestId('coding-game-summary').innerText();
   const dailyAfter = await page.getByTestId('coding-daily-earned').innerText();
   log(
-    `상한 연동 확인: 이번 판 적립 ${cappedReward} (50원 상한) · 오늘 ${dailyAfter.replace(/\n/g, ' ')} · 연습 모드 안내 ${cappedBody.includes('상한') || cappedBody.includes('연습')}`
+    `상한 연동 확인: 이번 판 적립 ${cappedReward} (50원 상한) · 오늘 ${dailyAfter.replace(/\n/g, ' ')} · 연습 모드/상한 안내 ${cappedBody.includes('상한') || cappedBody.includes('연습')}`
   );
   await shot(page, 'qa_coding_cap.png');
 
@@ -377,7 +304,7 @@ try {
     steps,
     shots,
     mission: { answered, missionCorrect },
-    games: { bugScore, bugReward, orderScore, orderReward, speedScore, speedReward },
+    games: { menuCards: gameCards },
     cap: { cappedReward, dailyAfter, englishDaily },
     permissions: { afterEnglishOnly, haeun },
     errors,

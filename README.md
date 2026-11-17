@@ -4,7 +4,7 @@
 **웹 + PWA + Supabase 연동형**이며, Supabase 설정이 없으면 **LocalStorage 데모 모드**로 즉시 시연됩니다.
 
 - 학생: 이름 + 4자리 PIN → 오늘의 미션(오답 먼저 + 신규) → 카드 암기 → 4지선다 → 스펠링 → 결과 → 스트릭·랭킹
-- 학생 🃏 **단어 짝맞추기 게임**: 6쌍(12장)/8쌍(16장) 영단어↔한글 뜻 뒤집기, 콤보·효과음, 판당 보상, **하루 최대 50원** 캐시 적립(상한 후엔 연습 모드)
+- 학생 🎮 **미니게임 10종 아케이드**: 영어 5종(🃏 짝맞추기 · ⌨️ 단어 산성비 · 🗡️ 몬스터 보스전 · 🔊 발음 리스닝 · 🧩 예문 빈칸) + 코딩 5종(🤖 로봇 길찾기 · ⌨️ 키워드 디펜스 · 🐞 디버깅 보스전 · 🎮 유니티 좌표 · 🕵️ 해커 침투). Canvas 2D·SVG 캐릭터·HP바·레이저·파티클·WebAudio 효과음, 판당 보상, **하루 최대 50원** 공용 캐시(상한 후엔 연습 모드)
 - 학생 🎁 **기프티콘 상점**: 보유 캐시로 츄파춥스·바나나맛 우유·CU 금액권 등 교환 신청 → 캐시 즉시 차감 · 신청 대기 내역
 - 원장님: 대시보드 · 학생/PIN 발급 · TOSEL 진단 기반 레벨 배정 · CSV 단어장 · 금요일 학부모 요약 복사 · **상점·교환 관리(일일 상한 설정, 상품 CRUD, 발송 완료/취소 환불)**
 - 학부모: `/r/:token` 읽기 전용 주간 리포트
@@ -97,6 +97,34 @@ QA_BASE=http://127.0.0.1:4173/raffine-voca-app node qa/game-shop.mjs
 | 관리자 | PIN 9999 로그인 → 「상점·교환」 탭에서 일일 상한, 상품 추가·수정·숨김·삭제, 교환 처리 |
 | 저장 | LocalStorage 데모 모드와 Supabase 모드 모두 같은 화면 코드. 실DB는 `cash_wallets`(cash_balance·daily_cash_earned) · `shop_items` · `redemption_requests` · `game_sessions` · `app_settings` 테이블과 `student_game_reward`/`student_redeem`/`admin_handle_redemption` RPC 사용 |
 
+## 🎮 미니게임 10종 아케이드 (2026-11-17 업그레이드)
+
+원장님 피드백("게임이 너무 재미없어, 보여지는 게 없어서")에 맞춰 **텍스트 문제집이 아닌 2D 아케이드**로 다시 만들었습니다.
+모든 게임에 실제로 움직이는 2D 그래픽(HTML5 Canvas 또는 SVG/CSS 스테이지), 캐릭터, HP·하트, 파티클 폭발, 타격 흔들림, 데미지 팝업, WebAudio 효과음이 들어갑니다.
+
+| 과목 | 게임 | 무대·연출 | 보상(1판) |
+|---|---|---|---|
+| 📚 영어 | 🃏 단어 짝맞추기 | 카드 플립 + 매치 스파크·콤보 연출 | 10~25원 |
+| 📚 영어 | ⌨️ 단어 산성비 | Canvas 밤하늘·운석·포대 레이저·폭발, 하트 5 | 격추 1원 + 콤보/무피격 → 최대 15원 |
+| 📚 영어 | 🗡️ 몬스터 보스전 | 기사 vs 보스 SVG 아레나, HP 바, 돌진·검기·데미지 팝업 | 명중 2원 + 처치/노데미지 → 최대 18원 |
+| 📚 영어 | 🔊 발음 리스닝 | 원어민 발음(speechSynthesis) + 실시간 음파, 0.8x/1.0x | 정답 2원 + 만점/스피드 → 최대 16원 |
+| 📚 영어 | 🧩 예문 빈칸 | 말풍선 스토리 카드, 단어 블록이 빈칸으로 낙하 | 정답 2원 + 한 번에 보너스 → 최대 20원 |
+| 💻 코딩 | 🤖 로봇 길찾기 | 5×5 격자·벽·코인·깃발, 명령 조립(`앞으로/좌·우회전/🔁2회`)·한 칸씩 실행 | 스테이지 2원 + 퍼펙트/올클리어 → 최대 18원 |
+| 💻 코딩 | ⌨️ 키워드 디펜스 | C1~C4 핵심 키워드 네온 운석 + 레이저 | 격추 1원 + 콤보/무피격 → 최대 15원 |
+| 💻 코딩 | 🐞 디버깅 보스전 | 개발자 vs 버그 보스 SVG 아레나, 고장 줄 터치 | 수정 2원 + 처치/노데미지 → 최대 18원 |
+| 💻 코딩 | 🎮 유니티 좌표 | X/Y 좌표 무대, Vector3 선택 → 캐릭터가 그 방향으로 이동 | 정답 2원 + 만점 → 최대 12원 |
+| 💻 코딩 | 🕵️ 해커 침투 | 다크 네온 터미널 + 매트릭스 비 + 3단계 자물쇠, `ACCESS GRANTED` | 방화벽 3원 + 완전/무흔적 → 최대 13원 |
+
+- 공통: 영어 학습(`오늘`·`오답노트`·`랭킹`), 코딩 학습(`오늘`·`오답노트`), 학생별 과목 권한, **하루 50원 공용 캐시 상한**, 🎁 기프티콘 상점·관리자 승인은 그대로 연동됩니다. 코딩 게임에서 틀린 문제는 `coding_wrong_notes`(오답노트)에 쌓입니다.
+- 게임 코드: `src/games/` (공통 `common.tsx`, Canvas 엔진 `shared/TypeDefense.tsx`, 전투 아레나 `shared/BattleArena.tsx`, 영어/코딩 게임 폴더), 캔버스 이펙트 `src/lib/fx.ts`, 효과음 `src/lib/sound.ts`.
+
+### 게임 QA
+
+```bash
+npm run build
+node qa/games10.mjs   # 10종 전부 진입·조작·클리어·캐시 적립 + 콘솔 오류 0 + 대표 스크린샷 4장
+```
+
 ## Supabase 연결 (실시간 DB로 전환)
 
 1. [supabase.com](https://supabase.com) → New project (무료).
@@ -129,7 +157,7 @@ QA_BASE=http://127.0.0.1:4173/raffine-voca-app node qa/game-shop.mjs
 | 과목 전환 | 두 과목을 모두 연 학생만 상단 `📚 영어 / 💻 코딩` 스위치 표시 · 한 과목만 열면 그 화면으로 고정 | `src/subject-context.tsx`, `src/components/SubjectSwitch.tsx`, `StudentHeader.tsx` |
 | 코딩 커리큘럼 시드 | C1 블록·기초(스크래치·순서도) / C2 파이썬 / C3 C언어 / C4 유니티 C# — **38문제** (출력 14 · 빈칸 8 · 버그 8 · 블록 8) | `src/data/codingSeed.ts` |
 | 코딩 `오늘` | 레벨별 일일 미션 5문제(오답 복습 최대 2 + 출력/빈칸), 틀린 문제는 해설과 함께 코딩 오답노트로 | `src/pages/CodingHome.tsx`, `src/lib/coding.ts` |
-| 코딩 `게임` | 🐛 버그 찾기(5문제·콤보) / 🧩 블록 순서 맞추기(4문제) / ⚡ 출력 스피드 퀴즈(6문제·12초) | `src/pages/CodingGamePage.tsx` |
+| 코딩 `게임` | 🤖 로봇 길찾기(5스테이지 5×5 격자) / ⌨️ 키워드 디펜스(10키워드 Canvas) / 🐞 디버깅 보스전(5문제·HP) / 🎮 유니티 좌표(5문제) / 🕵️ 해커 침투(3방화벽) | `src/pages/CodingGamePage.tsx`, `src/games/coding/*` |
 | 캐시 | 영어·코딩 **공용 지갑** — 하루 상한(기본 50원)을 나눠 씀. 상한을 채우면 연습 모드 | `store.grantCash` (기존 로직 그대로) |
 | 관리자 | `💻 코딩` 탭 — 수강 과목·코딩 레벨 변경, 푼 문제·정답률·오답·게임 판수·오늘 적립, 최근 게임 기록 | `src/pages/AdminPage.tsx` |
 | 실데이터 | 로컬 데모 완전 동작 + `supabase/schema.sql` **15) 코딩 확장** (students.coding_level·enabled_subjects, coding_logs·coding_wrong_notes·coding_sessions, `admin_set_subjects`·`student_coding_bundle` RPC) | `supabase/schema.sql`, `src/lib/store.ts` |

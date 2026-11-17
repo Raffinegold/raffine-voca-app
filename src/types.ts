@@ -137,17 +137,25 @@ export interface CashWallet {
   updated_at: string;
 }
 
-/** 짝맞추기 게임 1판 기록 */
+/** 영어 게임 5종 */
+export type EnglishGameKey = 'match' | 'rain' | 'boss' | 'listen' | 'blank';
+
+/** 짝맞추기 게임 1판 기록 (다른 영어 게임도 같은 기록에 game 으로 구분해 남깁니다) */
 export interface GameSession {
   id: string;
   student_id: string;
-  /** 6 또는 8 (쌍 수) */
+  /** 6 또는 8 (쌍 수) — 다른 게임은 라운드 수 */
   pairs: number;
   attempts: number;
   duration_ms: number;
   cash_earned: number;
   wrong_word_ids: string[];
   played_at: string;
+  /** 게임 종류 (없으면 예전 짝맞추기 기록) */
+  game?: EnglishGameKey;
+  /** 맞힌 수 / 전체 */
+  score?: number;
+  total?: number;
 }
 
 export interface ShopItem {
@@ -290,13 +298,19 @@ export interface CodingWrongNote {
   cleared_at: string | null;
 }
 
-export type CodingGameKey = 'bug' | 'order' | 'speed';
+/** 코딩 게임 5종 — 로봇·키워드 디펜스·디버깅 보스·유니티 좌표·해커 */
+export type CodingGameKey = 'robot' | 'rain' | 'debug' | 'unity' | 'hacker';
+
+/** 예전 3종 게임 기록 호환 (기록 화면에서만 쓰입니다) */
+export type LegacyCodingGameKey = 'bug' | 'order' | 'speed';
+
+export type AnyCodingGameKey = CodingGameKey | LegacyCodingGameKey;
 
 /** 코딩 게임 1판 기록 */
 export interface CodingSession {
   id: string;
   student_id: string;
-  game: CodingGameKey;
+  game: AnyCodingGameKey;
   score: number;
   total: number;
   cash_earned: number;

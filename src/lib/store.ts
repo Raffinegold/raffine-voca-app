@@ -1302,7 +1302,16 @@ class VocaStore {
 
   recordGameSession(
     studentId: string,
-    input: { pairs: number; attempts: number; durationMs: number; cashEarned: number; wrongWordIds: string[] }
+    input: {
+      pairs: number;
+      attempts: number;
+      durationMs: number;
+      cashEarned: number;
+      wrongWordIds: string[];
+      game?: GameSession['game'];
+      score?: number;
+      total?: number;
+    }
   ): GameSession {
     const session: GameSession = {
       id: uid('gs'),
@@ -1313,6 +1322,9 @@ class VocaStore {
       cash_earned: input.cashEarned,
       wrong_word_ids: input.wrongWordIds,
       played_at: new Date().toISOString(),
+      game: input.game ?? 'match',
+      score: input.score,
+      total: input.total,
     };
     this.games = [session, ...this.games].slice(0, 500);
     if (this.mode === 'supabase' && this.client) {

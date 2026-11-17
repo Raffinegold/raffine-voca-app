@@ -4,7 +4,7 @@ import { useSession, useVocaStore } from '../app-context';
 import StudentNav from '../components/StudentNav';
 import StudentHeader from '../components/StudentHeader';
 import { Badge, Bar, Button, Card, SectionTitle } from '../components/ui';
-import { buildCodingMission, buildCodingReview, CODING_GAME_META, shuffleChoices, type CodingMissionItem } from '../lib/coding';
+import { buildCodingMission, buildCodingReview, CODING_GAME_LIST, CODING_GAME_META, shuffleChoices, type CodingMissionItem } from '../lib/coding';
 import { problemById } from '../data/codingSeed';
 import { sfx } from '../lib/sound';
 import { cn, pct, weekStartStr, ymd } from '../lib/util';
@@ -182,7 +182,7 @@ export default function CodingHome() {
                   <Card>
                     <SectionTitle sub="캐시는 영어·코딩이 함께 써요">코딩 게임</SectionTitle>
                     <ul className="mt-3 space-y-1.5">
-                      {(Object.keys(CODING_GAME_META) as CodingGameKey[]).map((key) => (
+                      {CODING_GAME_LIST.map((key) => (
                         <li key={key} className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
                           <span className="text-base">{CODING_GAME_META[key].icon}</span>
                           <span className="flex-1 text-xs font-semibold text-slate-600">{CODING_GAME_META[key].label}</span>
