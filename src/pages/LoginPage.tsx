@@ -105,14 +105,15 @@ export default function LoginPage() {
             라피네코딩 두정점
           </div>
           <h1 className="mt-4 text-[30px] font-extrabold leading-tight">
-            라피네 영단어
-            <span className="ml-2 align-middle text-sm font-bold text-sunny">Level 1~5</span>
+            라피네 클래스
+            <span className="ml-2 align-middle text-sm font-bold text-sunny">영어 &amp; 코딩</span>
           </h1>
           <p className="mt-1.5 text-[13px] leading-relaxed text-white/75">
-            오늘 3분, 단어 12개. 틀린 단어는 내일 다시 만나요.
+            오늘 3분 영어 단어, 그리고 코딩 한 문제. 틀린 건 내일 다시 만나요.
           </p>
           <div className="mt-4 flex flex-wrap gap-1.5">
-            <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">TOSEL 연계 5단계</span>
+            <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">📚 TOSEL 연계 5단계</span>
+            <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">💻 코딩 C1~C4</span>
             <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">학부모 주간 리포트</span>
             <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold">{isCloud ? 'Supabase 실시간' : '데모 모드'}</span>
           </div>
@@ -260,7 +261,7 @@ export default function LoginPage() {
         <p className="mt-5 text-center text-[11px] leading-relaxed text-slate-400">
           단어는 교육부 기본 어휘를 참고해 자체 제작했습니다. 뜻과 예문은 사전 문장을 복제하지 않았어요.
           <br />
-          라피네코딩컴퓨터학원 두정점 · 무료 영어 진단 + 어휘 관리 도구
+          라피네코딩컴퓨터학원 두정점 · 영어 어휘 + 코딩 학습 도구
         </p>
       </div>
 

@@ -22,9 +22,9 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.svg', 'icons/icon-192.png', 'icons/icon-512.png'],
         manifest: {
-          name: '라피네 영단어 — Level 1~5',
-          short_name: '라피네 영단어',
-          description: '라피네코딩 두정점 TOSEL 연계 5단계 영단어 관리 앱',
+          name: '라피네 클래스 — 영어 & 코딩',
+          short_name: '라피네 클래스',
+          description: '라피네코딩 두정점 영어(5단계)·코딩(C1~C4) 통합 학습 앱',
           lang: 'ko',
           start_url: base,
           scope: base,

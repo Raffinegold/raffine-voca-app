@@ -63,7 +63,7 @@ export default function AdminPage() {
             <span className="grid h-9 w-9 place-items-center rounded-2xl bg-brand-600 text-base text-white shadow-soft">📚</span>
             <div>
               <p className="text-[11px] font-semibold text-slate-400">라피네코딩 두정점 · 관리자</p>
-              <p className="text-sm font-bold leading-tight text-slate-900">라피네 영단어</p>
+              <p className="text-sm font-bold leading-tight text-slate-900">라피네 클래스 · 영어 &amp; 코딩</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
@@ -921,7 +921,7 @@ function CodingAdminTab() {
                   <td className="px-4 py-3">
                     <p className="font-bold text-slate-800">{row.student.name}</p>
                     <p className="text-[11px] text-slate-400">
-                      {row.student.class_name} · 마지막 {formatKoTimestamp(row.lastPlayedAt)}
+                      {row.student.class_name} · {row.lastPlayedAt ? `최근 ${formatKoTimestamp(row.lastPlayedAt)}` : '플레이 전'}
                     </p>
                   </td>
                   <td className="px-3 py-3">
