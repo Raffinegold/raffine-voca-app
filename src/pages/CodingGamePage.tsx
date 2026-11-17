@@ -22,6 +22,14 @@ const BLURB: Record<CodingGameKey, string> = {
   hacker: '3단계 방화벽 암호 해독',
 };
 
+const RULE: Record<CodingGameKey, string> = {
+  robot: '스테이지 2원 + 퍼펙트 1원',
+  rain: '격추 1원 + 콤보·무피격',
+  debug: '수정 2원 + 처치 5원',
+  unity: '정답 2원 + 만점 2원',
+  hacker: '방화벽 3원 + 완전 침투 2원',
+};
+
 const TAG: Record<CodingGameKey, string> = {
   robot: '5스테이지 · 최대 16원',
   rain: '10키워드 · 최대 15원',
@@ -170,11 +178,11 @@ function CodingMenu({
         <SectionTitle sub="틀린 문제는 해설과 함께 오답노트로">코딩 게임 캐시</SectionTitle>
         <ul className="mt-3 space-y-1.5 text-[11.5px] text-slate-600">
           {CODING_GAME_LIST.map((key) => (
-            <li key={key} className="flex justify-between rounded-xl bg-slate-50 px-3 py-2">
-              <span>
+            <li key={key} className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2">
+              <span className="whitespace-nowrap">
                 {CODING_GAME_META[key].icon} {CODING_GAME_META[key].label}
               </span>
-              <span className="font-bold">{CODING_GAME_META[key].desc}</span>
+              <span className="text-right font-bold">{RULE[key]}</span>
             </li>
           ))}
         </ul>
