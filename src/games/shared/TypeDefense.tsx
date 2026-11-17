@@ -29,7 +29,8 @@ interface Meteor {
   hint?: string;
   x: number;
   y: number;
-  vy: number;
+  /** 속도·단계 배율을 곱하기 전 기본 배율 (생성 순서에 따라 조금씩 빨라짐) */
+  vyRatio: number;
   sway: number;
   phase: number;
   size: number;
@@ -37,6 +38,30 @@ interface Meteor {
 }
 
 type Theme = 'sky' | 'cyber';
+
+export type SpeedKey = 'slow' | 'normal' | 'fast';
+
+/** 낙하 속도 3단계 — 기본 낙하 속도(px/s)와 생성 주기(초)를 함께 바꿉니다. */
+export const SPEEDS: Record<SpeedKey, { label: string; emoji: string; vy: number; interval: number; hint: string }> = {
+  slow: { label: '느림(초등)', emoji: '🐢', vy: 17, interval: 2.2, hint: '천천히 내려와요 — 초등 저학년 추천' },
+  normal: { label: '보통', emoji: '🙂', vy: 27, interval: 1.75, hint: '기본 속도예요' },
+  fast: { label: '빠름', emoji: '🔥', vy: 38, interval: 1.32, hint: '쏟아져요 — 도전 모드' },
+};
+
+export const SPEED_ORDER: SpeedKey[] = ['slow', 'normal', 'fast'];
+
+/** 단계(Wave) — 격추 수에 따라 오르고, 오를수록 낙하 속도가 빨라지고 생성 주기가 짧아집니다. */
+export const WAVE_RULES = [
+  { wave: 1, fromKill: 0, vy: 1, gap: 1 },
+  { wave: 2, fromKill: 4, vy: 1.25, gap: 0.88 },
+  { wave: 3, fromKill: 8, vy: 1.55, gap: 0.76 },
+];
+
+export const waveOfKills = (kills: number) =>
+  kills >= 8 ? 3 : kills >= 4 ? 2 : 1;
+
+/** 마지막으로 고른 속도를 게임 재시작(재도전) 때도 이어 갑니다. */
+let lastSpeed: SpeedKey = 'normal';
 
 const THEME = {
   sky: {
@@ -70,6 +95,7 @@ export default function TypeDefense({
   sceneLabel,
   hintLabel = '뜻',
   accentText,
+  initialSpeed,
 }: {
   items: RainItem[];
   theme?: Theme;
@@ -79,6 +105,7 @@ export default function TypeDefense({
   sceneLabel: string;
   hintLabel?: string;
   accentText?: string;
+  initialSpeed?: SpeedKey;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -88,6 +115,10 @@ export default function TypeDefense({
   const [finished, setFinished] = useState(false);
   const [wordsOnScreen, setWordsOnScreen] = useState<string[]>([]);
   const [inputShake, setInputShake] = useState(0);
+  const [speed, setSpeed] = useState<SpeedKey>(initialSpeed ?? lastSpeed);
+  const speedRef = useRef<SpeedKey>(initialSpeed ?? lastSpeed);
+  const [wave, setWave] = useState(1);
+  const waveRef = useRef(1);
 
   const meteors = useRef<Meteor[]>([]);
   const queue = useRef<RainItem[]>([]);
@@ -116,15 +147,24 @@ export default function TypeDefense({
   const themeRef = useRef(THEME[theme]);
   themeRef.current = THEME[theme];
 
+  const changeSpeed = useCallback((next: SpeedKey) => {
+    lastSpeed = next;
+    speedRef.current = next;
+    setSpeed(next);
+    sfx.tap();
+  }, []);
+
   const reset = useCallback(() => {
     const shuffled = [...items].sort(() => Math.random() - 0.5);
     queue.current = shuffled;
     meteors.current = [];
     fx.current.clear();
     elapsed.current = 0;
-    spawnTimer.current = 1.25;
+    spawnTimer.current = 0.9;
     hudTimer.current = 0;
     ended.current = false;
+    waveRef.current = 1;
+    setWave(1);
     state.current = {
       hearts: maxHearts,
       kills: 0,
@@ -231,7 +271,7 @@ export default function TypeDefense({
         hint: item.hint,
         x,
         y: 40,
-        vy: 27 + Math.min(16, s.spawned * 0.7),
+        vyRatio: 1 + Math.min(0.5, s.spawned * 0.022),
         sway: 8 + Math.random() * 16,
         phase: Math.random() * Math.PI * 2,
         size: Math.min(30, Math.max(16, 12 + item.text.length * 1.6)),
@@ -266,13 +306,28 @@ export default function TypeDefense({
         }
         const w = dims?.w ?? 360;
         const h = dims?.h ?? 330;
-        const interval = Math.max(1.0, 1.75 - state.current.spawned * 0.04);
+        const sp = SPEEDS[speedRef.current];
+        /* 단계 상승 — 격추 수 기준 (0~3 Wave 1, 4~7 Wave 2, 8~10 Wave 3) */
+        const nextWave = waveOfKills(state.current.kills);
+        if (nextWave !== waveRef.current) {
+          const up = nextWave > waveRef.current;
+          waveRef.current = nextWave;
+          setWave(nextWave);
+          if (up) {
+            fx.current.popup(w / 2, h * 0.36, `WAVE ${nextWave}`, theme === 'cyber' ? '#c084fc' : '#fbbf24', 26);
+            fx.current.flash(theme === 'cyber' ? 'rgba(168,85,247,0.18)' : 'rgba(251,191,36,0.16)', 0.35);
+            sfx.combo(nextWave + 2);
+          }
+        }
+        const wv = WAVE_RULES[waveRef.current - 1];
+        const interval = Math.max(0.72, sp.interval * wv.gap - state.current.spawned * 0.03);
         if (spawnTimer.current >= interval && queue.current.length) {
           spawnTimer.current = 0;
           spawn(w);
         }
+        const fallSpeed = sp.vy * wv.vy;
         for (const m of meteors.current) {
-          m.y += m.vy * dt;
+          m.y += fallSpeed * m.vyRatio * dt;
           m.phase += dt * 1.6;
         }
         const floor = h - 52;
@@ -619,12 +674,54 @@ export default function TypeDefense({
   const offscreen = useMemo(() => wordsOnScreen.join(' '), [wordsOnScreen]);
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2.5" data-testid={`${testIdPrefix}-root`} data-speed={speed} data-wave={wave}>
+      {/* 속도 선택 — 게임 시작 전/진행 중 모두 바꿀 수 있고, 다음 운석부터 바로 반영됩니다 */}
+      <div className="flex items-center gap-2 rounded-2xl bg-slate-900 px-2.5 py-2 ring-1 ring-white/10">
+        <span className="shrink-0 text-[10.5px] font-bold text-slate-400">속도</span>
+        <div className="flex flex-1 gap-1.5">
+          {SPEED_ORDER.map((key) => {
+            const on = speed === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                data-testid={`${testIdPrefix}-speed-${key}`}
+                data-active={on ? '1' : '0'}
+                aria-pressed={on}
+                title={SPEEDS[key].hint}
+                onClick={() => changeSpeed(key)}
+                className={cn(
+                  'flex-1 whitespace-nowrap rounded-xl px-1.5 py-1.5 text-[10.5px] font-extrabold transition active:scale-95',
+                  on
+                    ? 'bg-cyan-400 text-slate-950 shadow ring-1 ring-cyan-200'
+                    : 'bg-slate-800 text-slate-300 ring-1 ring-white/5 hover:bg-slate-700'
+                )}
+              >
+                <span aria-hidden>{SPEEDS[key].emoji}</span> {SPEEDS[key].label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div
         className="relative overflow-hidden rounded-3xl bg-slate-950 shadow-card ring-1 ring-white/10"
         onClick={() => inputRef.current?.focus({ preventScroll: true })}
       >
         <canvas ref={canvasRef} className="block h-[318px] w-full sm:h-[350px]" data-testid={`${testIdPrefix}-canvas`} />
+
+        {/* WAVE 배지 — 격추 수가 늘면 단계가 올라가고 낙하가 빨라져요 */}
+        <div className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
+          <span
+            key={wave}
+            data-testid={`${testIdPrefix}-wave`}
+            data-wave={wave}
+            className="animate-pop rounded-full bg-gradient-to-r from-amber-300 to-orange-500 px-2.5 py-0.5 text-[10px] font-extrabold tracking-wider text-amber-950 shadow ring-1 ring-white/40"
+          >
+            WAVE {wave}
+            <span className="ml-0.5 text-[9px] font-bold text-amber-900/60">/3</span>
+          </span>
+        </div>
 
         {/* HUD */}
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-2.5">
@@ -698,6 +795,7 @@ export default function TypeDefense({
       </div>
       <p className="text-center text-[10.5px] leading-relaxed text-slate-400">
         {hintLabel}는 힌트로 보여 줘요. 철자를 다 치면 자동 발사, 엔터를 누르면 앞부분만 쳐도 가장 가까운 운석을 맞춰요.
+        <br className="sm:hidden" /> 격추 4·8개마다 <span className="font-bold text-amber-300">WAVE</span>가 올라 낙하가 빨라져요.
       </p>
     </div>
   );
